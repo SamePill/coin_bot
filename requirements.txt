@@ -1,5 +1,5 @@
 pyupbit
 pandas
-pandas-ta==0.3.14b0
+pandas-ta-classic
 pymysql
 python-telegram-bot
