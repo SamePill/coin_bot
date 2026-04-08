@@ -1,0 +1,5 @@
+db_data/
+__pycache__/
+*.pyc
+.git/
+coin_env/
