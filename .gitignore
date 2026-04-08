@@ -5,6 +5,6 @@
 __pycache__/
 coin_env/
 *.pyc
-
+.git/
 # DB 볼륨 데이터 (도커 마운트 폴더)
 db_data/
