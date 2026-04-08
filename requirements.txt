@@ -1,0 +1,5 @@
+pyupbit
+pandas
+pandas-ta==0.3.14b0
+pymysql
+python-telegram-bot

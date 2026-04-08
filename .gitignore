@@ -1,0 +1,11 @@
+# 보안 파일 (절대 Git에 올리지 않음)
+config.py
+.env
+
+# 가상환경 및 캐시
+__pycache__/
+coin_env/
+*.pyc
+
+# DB 볼륨 데이터 (도커 마운트 폴더)
+db_data/
