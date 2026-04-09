@@ -71,13 +71,29 @@ def get_dynamic_grid_step(ticker):
         print(f"⚠️ {ticker} 변동성 계산 오류 (기본값 1.0 적용): {e}")
     return 1.0
 
-def get_pyramiding_weight(buy_level):
-    if buy_level <= 1: return 1.0     
-    elif buy_level == 2: return 1.5   
-    elif buy_level == 3: return 2.0   
-    elif buy_level >= 4: return 3.0   
+def get_pyramiding_weight(buy_level, current_regime):
+    """💡 시장 상황에 따라 공격적 배팅과 방어적 물타기 모드를 자동 스위칭합니다."""
+    
+    # 1. 상승/횡보장 (SUPER_BULL, NORMAL): 회전율 극대화 (치고 빠지기)
+    if current_regime in ["SUPER_BULL", "NORMAL"]:
+        # 기본 투자금(예: 6,000원)의 2배(12,000원)로 크게 진입하여 짤짤이 수익 극대화
+        if buy_level <= 1: return 2.0     
+        # 하락 시 가볍게 1배수(6,000원)만 타고 탈출 시도
+        elif buy_level == 2: return 1.0   
+        # 상승장에서는 3차 이상 물리지 않도록 추가 시드 투입 완전 차단 (예산 보호)
+        elif buy_level >= 3: return 0.0   
+        
+    # 2. 하락장 (CAUTION, ICE_AGE): 하락장 방어 모드 (기획자님 제안 로직 적용)
+    else:
+        # 하락장이 감지되면 1차 진입(정찰병)을 1배수(6,000원)로 최소화
+        if buy_level <= 1: return 1.0     
+        # 이후 2, 4, 6, 8 배수로 부드럽게 평단가를 낮춤 (최대 소진액 제한)
+        elif buy_level == 2: return 2.0   
+        elif buy_level == 3: return 4.0   
+        elif buy_level == 4: return 6.0   
+        elif buy_level >= 5: return 8.0   
+        
     return 1.0
-
 # -------------------------------------------------------------
 # 🕵️‍♂️ 그리드 전용: 종목 발굴 및 리밸런싱 로직
 # -------------------------------------------------------------
@@ -93,7 +109,8 @@ def evaluate_grid_candidates():
         scores = []
         
         for t in all_tickers:
-            if t == "KRW-ETH": continue
+            #이더리움 단독 고정 슬롯 사용시만 필요
+            #if t == "KRW-ETH": continue. 
             score = analyzer.get_grid_suitability_score(t)
             if score > 0:
                 scores.append({'ticker': t, 'score': score})
@@ -142,7 +159,7 @@ def run_grid_engine(now):
         profit_rate = (curr_p - pos['buy']) / pos['buy']
         
         # --- [교체 판별 로직] ---
-        if ticker != "KRW-ETH" and ticker not in top_grid_candidates and profit_rate > 0.01:
+        if ticker not in top_grid_candidates and profit_rate > 0.01:
             # 💡 [수정] DB에 기록될 실제 원화(KRW) 실현 수익 계산
             realized_krw = (curr_p - pos['buy']) * pos['vol']
             if worker.execute_sell(ticker, pos['vol'], pos['slot_index'], profit_rate*100, realized_krw):
