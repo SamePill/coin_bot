@@ -1,3 +1,11 @@
+# 💡 공통 설정 블록: 3개 봇에 공통으로 들어갈 설정을 미리 정의합니다.
+x-bot-common: &bot-common
+  build: .
+  restart: always          # 서버 재시작 시 봇도 자동 재시작
+  env_file: .env
+  extra_hosts:
+    - "host.docker.internal:host-gateway" # ⭐ 핵심: 도커 안에서 호스트 DB(localhost)로 연결해주는 통로
+
 services:
 #  mariadb:
 #    image: mariadb:10.11
@@ -19,10 +27,10 @@ services:
 
 # 🛡️ 1. 코어 엔진 (Core Engine)
   core-bot:
-    build: .
+    <<: *bot-common
     container_name: aegis_core
-    profiles: ["core"]
-    restart: unless-stopped
+    profiles: ["core","all"]
+#    restart: unless-stopped
 #    depends_on:
 #      - mariadb
     env_file: .env
@@ -34,10 +42,10 @@ services:
 
   # 🏹 2. 헌터 엔진 (Hunter Engine)
   hunter-bot:
-    build: .
+    <<: *bot-common
     container_name: aegis_hunter
-    profiles: ["hunter"]
-    restart: unless-stopped
+    profiles: ["hunter","all"]
+#    restart: unless-stopped
 #    depends_on:
 #      - mariadb
     env_file: .env
@@ -49,10 +57,10 @@ services:
 
   # 📊 3. 스마트 그리드 엔진 (Smart Grid Engine)
   grid-bot:
-    build: .
+    <<: *bot-common
     container_name: aegis_grid
-    profiles: ["grid"]
-    restart: unless-stopped
+    profiles: ["grid","all"]
+#    restart: unless-stopped
 #    depends_on:
 #      - mariadb
     env_file: .env
