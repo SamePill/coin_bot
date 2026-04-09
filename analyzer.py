@@ -200,6 +200,7 @@ def get_market_regime(current_regime):
         uptrend_count = 0
         for t in tickers[:30]:
             df = pyupbit.get_ohlcv(t, interval="day", count=21)
+            time.sleep(0.05)
             if df is not None and pyupbit.get_current_price(t) >= df['close'].mean():
                 uptrend_count += 1
         

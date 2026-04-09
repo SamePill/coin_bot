@@ -46,7 +46,7 @@ top_grid_candidates = []
 last_grid_eval_time = None
 
 print(f"====================================================")
-print(f"🏆 [시스템] Aegis-Elite V17.17 방탄 패치 가동 (모드: {ENGINE_TYPE})")
+print(f"🏆 [시스템] Aegis-Elite V17.17 무결성 패치 가동 (모드: {ENGINE_TYPE})")
 if ENGINE_TYPE == 'GRID':
     print(f"🎰 그리드 슬롯: {GRID_TOTAL_SLOTS} | 다중슬롯: {USE_MULTI_SLOT} (Max {MAX_SLOTS_PER_COIN})")
 else:
@@ -55,37 +55,33 @@ print(f"💰 할당 예산: {MAX_BUDGET:,.0f}원")
 print(f"====================================================\n")
 
 # -------------------------------------------------------------
-# 🧠 하이브리드 엔진 코어 함수 (Step 3 방탄 패치 적용)
+# 🧠 하이브리드 엔진 코어 함수
 # -------------------------------------------------------------
 def get_dynamic_grid_step(ticker):
-    """[패치 3] 단기 뇌피셜 방지: 최근 7일 평균 진폭(ATR) 기반 동적 간격 조절"""
     try:
-        # 최근 7일치 데이터를 기반으로 평균적인 변동성을 계산합니다.
         df = pyupbit.get_ohlcv(ticker, interval="day", count=7)
         if df is not None and len(df) > 1:
             amplitudes = (df['high'] - df['low']) / df['close'] * 100
             avg_volatility = amplitudes.mean()
             
-            if avg_volatility >= 5.0: return 2.0   # 고변동성 코인은 2.0% 간격
-            elif avg_volatility >= 2.0: return 1.0 # 보통 코인은 1.0% 간격
-            else: return 0.5                       # 얌전한 코인은 0.5% 간격
+            if avg_volatility >= 5.0: return 2.0   
+            elif avg_volatility >= 2.0: return 1.0 
+            else: return 0.5                       
     except Exception as e:
         print(f"⚠️ {ticker} 변동성 계산 오류 (기본값 1.0 적용): {e}")
     return 1.0
 
 def get_pyramiding_weight(buy_level):
-    """[기능 2] 피라미딩 가중치 (안전형 옵션 1: 최대 3.0배 한도)"""
-    if buy_level <= 1: return 1.0     # 1차 매수: 1.0배
-    elif buy_level == 2: return 1.5   # 2차 매수: 1.5배
-    elif buy_level == 3: return 2.0   # 3차 매수: 2.0배
-    elif buy_level >= 4: return 3.0   # 4차 이상: 3.0배 한도 (강력 방어)
+    if buy_level <= 1: return 1.0     
+    elif buy_level == 2: return 1.5   
+    elif buy_level == 3: return 2.0   
+    elif buy_level >= 4: return 3.0   
     return 1.0
 
 # -------------------------------------------------------------
 # 🕵️‍♂️ 그리드 전용: 종목 발굴 및 리밸런싱 로직
 # -------------------------------------------------------------
 def evaluate_grid_candidates():
-    """6~12시간마다 그리드에 적합한 횡보/변동성 종목 스캔"""
     global top_grid_candidates
     try:
         print("🔍 [그리드 레이더] 최적 사냥터 스캔 중...")
@@ -108,16 +104,16 @@ def evaluate_grid_candidates():
         print(f"❌ 후보 스캔 오류: {e}")
 
 # -------------------------------------------------------------
-# 🛡️ 엔진 1 & 2: 코어 / 헌터 로직 (기존 유지)
+# 🛡️ 엔진 1 & 2: 코어 / 헌터 로직
 # -------------------------------------------------------------
 def run_core_engine(now):
-    pass # 기존 worker 로직
+    pass 
 
 def run_hunter_engine(now):
-    pass # 기존 worker 로직
+    pass 
 
 # -------------------------------------------------------------
-# 🕸️ 엔진 3: 스마트 그리드 (GRID) 동적 로직 (하이브리드 이식 완료)
+# 🕸️ 엔진 3: 스마트 그리드 (GRID) 동적 로직
 # -------------------------------------------------------------
 def run_grid_engine(now):
     global bot_positions, top_grid_candidates
@@ -125,14 +121,13 @@ def run_grid_engine(now):
     grid_pos_items = {k: v for k, v in bot_positions.items() if v['engine'] == 'GRID'}
     active_tickers = {} 
     
-    # [패치 4] API 호출 최적화: 개별 조회가 아닌 감시 리스트 전체를 1번의 API 호출로 가져옴
     watch_list = list(set([pos['ticker'] for pos in grid_pos_items.values()] + top_grid_candidates))
     current_prices = pyupbit.get_current_price(watch_list) if watch_list else {}
 
     # [1] 기존 슬롯 관리 (매매 및 교체)
     for key, pos in list(grid_pos_items.items()):
         ticker = pos['ticker']
-        curr_p = current_prices.get(ticker) # 최적화된 딕셔너리에서 가격 참조
+        curr_p = current_prices.get(ticker) 
         if not curr_p: continue
         
         active_tickers[ticker] = active_tickers.get(ticker, 0) + 1
@@ -140,7 +135,9 @@ def run_grid_engine(now):
         
         # --- [교체 판별 로직] ---
         if ticker != "KRW-ETH" and ticker not in top_grid_candidates and profit_rate > 0.01:
-            if worker.execute_sell(ticker, pos['vol'], pos['slot_index'], profit_rate*100):
+            # 💡 [수정] DB에 기록될 실제 원화(KRW) 실현 수익 계산
+            realized_krw = (curr_p - pos['buy']) * pos['vol']
+            if worker.execute_sell(ticker, pos['vol'], pos['slot_index'], profit_rate*100, realized_krw):
                 print(f"⚖️ [슬롯 교체] {ticker} (수익권 방출 후 새 종목 대기)")
                 del bot_positions[key]
                 continue
@@ -160,8 +157,12 @@ def run_grid_engine(now):
             base_unit = UNIT_LIST[pos['slot_index']-1] if (pos['slot_index']-1) < len(UNIT_LIST) else UNIT_LIST[-1]
             invest_amount = base_unit * weight
             
-            # [패치 5] 안전 장치: 예산(보유 원화) 초과 검사
+            # 💡 [수정] API 응답 에러(None) 처리 로직 (TypeError 방지)
             krw_balance = upbit.get_balance("KRW")
+            if krw_balance is None:
+                print(f"⚠️ [API 지연] 잔고 조회 실패. 다음 틱에 다시 시도합니다.")
+                continue
+
             if krw_balance < invest_amount:
                 print(f"❌ [예산 초과] {ticker} {next_level}차 진입 실패. (필요: {invest_amount:,.0f}원 / 잔고: {krw_balance:,.0f}원)")
                 continue
@@ -169,9 +170,8 @@ def run_grid_engine(now):
             print(f"📉 [하락 방어] {ticker} {next_level}차 진입 시도 ({invest_amount:,.0f}원 / {weight}배 가중치)")
             
             if worker.execute_buy(ticker, invest_amount, pos['slot_index']):
-                time.sleep(1.5) # 업비트 체결 지연 대기
+                time.sleep(1.5) 
                 
-                # [패치 2] 뇌피셜 방지: 업비트에서 '실제' 잔고와 매수평균가를 다시 긁어옴
                 real_vol = upbit.get_balance(ticker)
                 real_avg_price = upbit.get_avg_buy_price(ticker)
                 
@@ -179,7 +179,6 @@ def run_grid_engine(now):
                 bot_positions[key]['vol'] = real_vol
                 bot_positions[key]['buy_level'] = next_level
                 
-                # [패치 1] DB 기억 복구: 상태를 DB에 확실히 저장
                 try:
                     db_manager.update_position_state(key, real_avg_price, real_vol, next_level)
                 except AttributeError:
@@ -190,8 +189,11 @@ def run_grid_engine(now):
 
         # 2️⃣ 상승 시: 익절 매도
         elif curr_p >= target_sell_price:
+            # 💡 [수정] DB에 기록될 실제 원화(KRW) 실현 수익 계산
+            realized_krw = (curr_p - pos['buy']) * pos['vol']
             print(f"📈 [수익 실현] {ticker} 목표가 도달! 전량 익절 (수익률 {profit_rate*100:.2f}%)")
-            if worker.execute_sell(ticker, pos['vol'], pos['slot_index'], profit_rate*100):
+            
+            if worker.execute_sell(ticker, pos['vol'], pos['slot_index'], profit_rate*100, realized_krw):
                 print(f"🎉 {ticker} {current_level}차 진입 물량 청산 완료 (슬롯 개방)")
                 del bot_positions[key]
                 continue
@@ -209,28 +211,31 @@ def run_grid_engine(now):
             
             if current_count < slot_limit:
                 unit_size = UNIT_LIST[current_count] if current_count < len(UNIT_LIST) else UNIT_LIST[-1]
-                new_slot_idx = current_count + 1
                 
-                # 신규 진입 전에도 현재가 확인 (최적화된 딕셔너리 사용)
+                # 💡 [수정] 슬롯 인덱스 중복(덮어쓰기) 방지를 위한 안전한 번호 부여 로직
+                existing_slots = [p['slot_index'] for p in bot_positions.values() if p['ticker'] == ticker and p['engine'] == 'GRID']
+                new_slot_idx = 1
+                while new_slot_idx in existing_slots:
+                    new_slot_idx += 1
+                
                 curr_p_new = current_prices.get(ticker)
                 if not curr_p_new: continue
 
                 if worker.execute_buy(ticker, unit_size, new_slot_idx):
-                    time.sleep(1.5) # 체결 지연 대기
+                    time.sleep(1.5) 
                     real_vol = upbit.get_balance(ticker)
                     real_avg_price = upbit.get_avg_buy_price(ticker)
                     
                     key = f"{ticker}_slot_{new_slot_idx}"
                     bot_positions[key] = {
                         'ticker': ticker, 
-                        'vol': real_vol, # 실제 데이터로 저장
-                        'buy': real_avg_price, # 실제 데이터로 저장
+                        'vol': real_vol, 
+                        'buy': real_avg_price, 
                         'slot_index': new_slot_idx, 
                         'engine': 'GRID',
-                        'buy_level': 1  # 💡 신규 진입 시 1차수로 초기화
+                        'buy_level': 1  
                     }
                     
-                    # 신규 진입도 DB에 1차수로 명확히 업데이트
                     try:
                         db_manager.update_position_state(key, real_avg_price, real_vol, 1)
                     except AttributeError:
@@ -244,7 +249,6 @@ def run_grid_engine(now):
 # 🔄 메인 제어 루프
 # -------------------------------------------------------------
 bot_positions = db_manager.recover_bot_positions(upbit)
-# DB에서 복구 시 buy_level 정보가 없다면 일괄 1로 초기화 (안전장치)
 for k, v in bot_positions.items():
     if 'buy_level' not in v:
         v['buy_level'] = 1
@@ -253,21 +257,17 @@ while True:
     try:
         now = datetime.now()
         
-        # [1] 시장 상황 판단
         if now.minute % 15 == 0:
             current_regime = analyzer.get_market_regime(current_regime)
 
-        # [2] 그리드 후보 스캔
         if ENGINE_TYPE == 'GRID':
             if last_grid_eval_time is None or now >= last_grid_eval_time + timedelta(hours=6):
                 evaluate_grid_candidates()
                 last_grid_eval_time = now
 
-        # [3] 폭락 시 긴급 대응
         if analyzer.check_panic_fall():
             time.sleep(10); continue
 
-        # [4] 엔진 실행
         if ENGINE_TYPE == 'CORE': run_core_engine(now)
         elif ENGINE_TYPE == 'HUNTER': run_hunter_engine(now)
         elif ENGINE_TYPE == 'GRID': run_grid_engine(now)

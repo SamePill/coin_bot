@@ -17,7 +17,8 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _bot_positions:
         msg += "- 현재 보유 중인 종목이 없습니다."
     else:
-        for t, p in _bot_positions.items():
+        #for t, p in _bot_positions.items():
+        for t, p in list(_bot_positions.items()): # list() 로 감싸기
             ic = "🛡️" if p['engine']=='CORE' else ("🏹" if p['engine']=='HUNTER' else "🕸️")
             curr_p = pyupbit.get_current_price(t) or p['buy']
             rate = ((curr_p - p['buy']) / p['buy']) * 100
