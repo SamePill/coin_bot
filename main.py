@@ -551,7 +551,7 @@ def run_grid_engine(now):
                     break # 예산이 꽉 찼으면 스캔 중단
 
                 budget_lock_notified['GRID'] = False
-                
+
                 # 💡 [수정] 슬롯 인덱스 중복(덮어쓰기) 방지를 위한 안전한 번호 부여 로직
                 existing_slots = [p['slot_index'] for p in bot_positions.values() if p['ticker'] == ticker and p['engine'] == 'GRID']
                 new_slot_idx = 1
@@ -1026,7 +1026,7 @@ while True:
                 last_target_fetch_time = now 
                 threading.Thread(target=background_target_fetcher).start()
 
-        if ENGINE_TYPE in ['GRID', 'SCALP']:
+        if ENGINE_TYPE in ['GRID', 'SCALP','CLASSIC_GRID']:
             if last_grid_eval_time is None or now >= last_grid_eval_time + timedelta(hours=6):
                 evaluate_grid_candidates()
                 last_grid_eval_time = now
