@@ -1,21 +1,21 @@
 services:
-  mariadb:
-    image: mariadb:10.11
-    container_name: aegis_db
-    restart: unless-stopped
-    ports:
-      - "3305:3305"
-    env_file: .env   # 💡 .env 파일의 내용을 환경 변수로 주입 
-    environment:
-      #MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
-      #MYSQL_DATABASE: ${DB_NAME}
-      MARIADB_ROOT_PASSWORD: ${DB_PASS}
-      MARIADB_DATABASE: ${DB_NAME}
-      MARIADB_USER: ${DB_USER}
-      MARIADB_PASSWORD: ${DB_PASS}
-      TZ: Asia/Seoul
-    volumes:
-      - ./db_data:/var/lib/mysql
+#  mariadb:
+#    image: mariadb:10.11
+#    container_name: aegis_db
+#    restart: unless-stopped
+#    ports:
+#      - "3305:3305"
+#    env_file: .env   # 💡 .env 파일의 내용을 환경 변수로 주입 
+#    environment:
+#      #MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+#      #MYSQL_DATABASE: ${DB_NAME}
+#      MARIADB_ROOT_PASSWORD: ${DB_PASS}
+#      MARIADB_DATABASE: ${DB_NAME}
+#      MARIADB_USER: ${DB_USER}
+#      MARIADB_PASSWORD: ${DB_PASS}
+#      TZ: Asia/Seoul
+#    volumes:
+#      - ./db_data:/var/lib/mysql
 
 # 🛡️ 1. 코어 엔진 (Core Engine)
   core-bot:
@@ -23,8 +23,8 @@ services:
     container_name: aegis_core
     profiles: ["core"]
     restart: unless-stopped
-    depends_on:
-      - mariadb
+#    depends_on:
+#      - mariadb
     env_file: .env
     environment:
       - ENGINE_TYPE=CORE
@@ -38,8 +38,8 @@ services:
     container_name: aegis_hunter
     profiles: ["hunter"]
     restart: unless-stopped
-    depends_on:
-      - mariadb
+#    depends_on:
+#      - mariadb
     env_file: .env
     environment:
       - ENGINE_TYPE=HUNTER
@@ -53,8 +53,8 @@ services:
     container_name: aegis_grid
     profiles: ["grid"]
     restart: unless-stopped
-    depends_on:
-      - mariadb
+#    depends_on:
+#      - mariadb
     env_file: .env
     environment:
       - ENGINE_TYPE=GRID
