@@ -177,7 +177,7 @@ def run_grid_engine(now):
         # 1️⃣ 하락 시: 가중치 피라미딩 매수 (물타기)
         if curr_p <= target_buy_price:
             next_level = current_level + 1
-            weight = get_pyramiding_weight(next_level)
+            weight = get_pyramiding_weight(next_level, current_regime)
             
             base_unit = UNIT_LIST[pos['slot_index']-1] if (pos['slot_index']-1) < len(UNIT_LIST) else UNIT_LIST[-1]
             invest_amount = base_unit * weight
