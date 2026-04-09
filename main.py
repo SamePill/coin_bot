@@ -179,6 +179,12 @@ def run_grid_engine(now):
             next_level = current_level + 1
             weight = get_pyramiding_weight(next_level, current_regime)
             
+            # 💡 [추가] 가중치가 0.0이면 (상승장 3차 진입 제한 등) 매수를 시도하지 않고 스킵합니다.
+            if weight <= 0:
+                # 너무 자주 찍히지 않게 1시간에 한 번 정도만 로그를 남기거나 바로 pass 합니다.
+                # print(f"⚠️ [{ticker}] {next_level}차 진입 제한 모드 (상승장 예산 보호)")
+                continue
+
             base_unit = UNIT_LIST[pos['slot_index']-1] if (pos['slot_index']-1) < len(UNIT_LIST) else UNIT_LIST[-1]
             invest_amount = base_unit * weight
             
