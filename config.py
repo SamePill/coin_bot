@@ -52,6 +52,10 @@ REGIME_SETTINGS = {
     "ICE_AGE":    {"ratio": 0.0, "desc": "⛈️ 빙하기"}
 }
 
+
+# 💡 [추가] 텔레그램 매매 알림 On/Off 스위치 (.env 파일에서 ENABLE_TRADE_NOTI=False 로 끌 수 있음)
+ENABLE_TRADE_NOTI = os.getenv("ENABLE_TRADE_NOTI", "True").lower() == "true"
+
 def send_telegram(message):
     try: requests.get(f"https://api.telegram.org/bot{TEL_TOKEN}/sendMessage", params={"chat_id": TEL_CHAT_ID, "text": message})
     except: pass

@@ -64,6 +64,7 @@ def update_position(engine_name, ticker, price, volume, side, slot_index=1):
         with conn.cursor() as cur:
             if side == 'BUY':
                 # 슬롯별로 독립적인 평단가와 수량을 기록 (Upsert)
+                # 💡 Schema와 완벽히 일치 (6개 컬럼 입력, 나머지는 Default 값 적용)
                 sql = """
                     INSERT INTO current_positions (engine_name, ticker, slot_index, buy_price, volume, invested_amount)
                     VALUES (%s, %s, %s, %s, %s, %s)
@@ -94,7 +95,6 @@ def recover_bot_positions(upbit):
     try:
         conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
         with conn.cursor(pymysql.cursors.DictCursor) as cur:
-            # buy_level 컬럼 추가 조회
             sql = "SELECT ticker, engine_name, slot_index, buy_price, volume, buy_level FROM current_positions"
             cur.execute(sql)
             rows = cur.fetchall()
@@ -109,7 +109,7 @@ def recover_bot_positions(upbit):
                     'buy': float(r['buy_price']),
                     'vol': float(r['volume']),
                     'slot_index': slot_idx,
-                    'engine_name': r['engine'],
+                    'engine': r['engine_name'], # 💡 오류 수정됨: r['engine'] -> r['engine_name']
                     'buy_level': r['buy_level'] if r['buy_level'] is not None else 1
                 }
         print(f"🔄 DB에서 {len(positions)}개의 포지션을 성공적으로 복구했습니다.")
@@ -150,7 +150,6 @@ def get_today_performance():
 
 def update_position_state(key, real_avg_price, real_vol, next_level):
     """물타기(피라미딩) 성공 후, 진짜 평단가와 매수 차수를 DB에 안전하게 기록합니다."""
-    # key 예시: "KRW-BTC_slot_1" -> 여기서 ticker와 slot_index를 분리
     parts = key.split('_slot_')
     if len(parts) != 2: return
     
@@ -161,9 +160,10 @@ def update_position_state(key, real_avg_price, real_vol, next_level):
     try:
         conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
         with conn.cursor() as cur:
+            # 💡 오류 수정됨: updated_at = NOW() 구문 삭제 (DB가 자동으로 갱신함)
             sql = """
                 UPDATE current_positions 
-                SET buy_price = %s, volume = %s, buy_level = %s, updated_at = NOW()
+                SET buy_price = %s, volume = %s, buy_level = %s
                 WHERE ticker = %s AND slot_index = %s
             """
             cur.execute(sql, (real_avg_price, real_vol, next_level, ticker, slot_index))

@@ -266,10 +266,32 @@ for k, v in bot_positions.items():
 # 텔레그램 봇 백그라운드 가동 (이 한 줄 필수 추가!)
 telegram_handler.start_telegram_listener(bot_positions, lambda: MAX_BUDGET)
 
+# 자동 일일 보고를 위한 변수
+last_daily_report_day = None
+
+# 💡 [추가] 연속 에러 알림 스팸 방지용 카운터
+consecutive_errors = 0
+
 while True:
     try:
         now = datetime.now()
         
+        # 💡 매일 아침 8시 0분에 한 번만 자동 보고서 발송
+        if now.hour == 8 and now.minute == 0 and last_daily_report_day != now.day:
+            rows = db_manager.get_today_performance()
+            report_msg = f"🌅 [아침 브리핑] 어제 총 결산\n\n"
+            if not rows:
+                report_msg += "어제는 완료된 매매가 없었습니다."
+            else:
+                total_krw = 0
+                for r in rows:
+                    report_msg += f"- {r['engine']}: {r['total_profit']:+,.0f}원\n"
+                    total_krw += r['total_profit']
+                report_msg += f"──────────────\n💵 총 실현 손익: {total_krw:+,.0f}원"
+            
+            send_telegram(report_msg)
+            last_daily_report_day = now.day # 발송 완료 기록
+
         if now.minute % 15 == 0:
             current_regime = analyzer.get_market_regime(current_regime)
 
@@ -285,10 +307,34 @@ while True:
         elif ENGINE_TYPE == 'HUNTER': run_hunter_engine(now)
         elif ENGINE_TYPE == 'GRID': run_grid_engine(now)
 
+        # 💡 루프가 에러 없이 정상적으로 끝까지 도달하면 에러 카운터 초기화
+        consecutive_errors = 0
+
         loop_delay = 1 if ENGINE_TYPE == 'HUNTER' else 3
         time.sleep(loop_delay)
 
     except Exception as e:
         print(f"🚨 [{ENGINE_TYPE}] 루프 에러: {e}")
         traceback.print_exc()
-        time.sleep(5)
+        
+        # 💡 [추가] 에러 발생 시 텔레그램 긴급 노티 발송 및 스팸 방지
+        consecutive_errors += 1
+        
+        # 연속 3회까지만 텔레그램을 발송하고, 이후는 콘솔에만 기록하여 스팸을 방지합니다.
+        if consecutive_errors <= 3:
+            error_msg = (
+                f"🚨 [{ENGINE_TYPE} 봇 긴급 오류]\n"
+                f"시스템 루프에서 에러가 발생했습니다.\n\n"
+                f"원인: {str(e)[:150]}" # 텔레그램 메시지 길이 제한 방지를 위해 150자로 자름
+            )
+            
+            if consecutive_errors == 3:
+                error_msg += "\n\n⚠️ 동일 오류가 지속 반복되어 알림을 일시 중단합니다. 서버를 즉시 확인해 주세요!"
+                
+            try:
+                send_telegram(error_msg)
+            except:
+                pass
+                
+        # 에러 발생 시 오토 힐링 및 과부하 방지를 위해 대기 시간을 기존 5초에서 10초로 연장
+        time.sleep(10)

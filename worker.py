@@ -2,7 +2,7 @@ import os
 import time
 import pyupbit
 import db_manager
-from config import UPBIT_ACCESS, UPBIT_SECRET
+from config import UPBIT_ACCESS, UPBIT_SECRET, send_telegram, ENABLE_TRADE_NOTI
 
 # --- [도커 환경 변수 로드] ---
 ENGINE_TYPE = os.getenv('ENGINE_TYPE', 'CORE').upper()
@@ -45,6 +45,15 @@ def execute_buy(ticker, amount, slot_index=1):
                 db_manager.log_trade(ticker, "BUY", curr_p, vol)
                 
                 print(f"✅ [{ENGINE_TYPE}] {ticker} 슬롯 {slot_index} 매수 성공: {amount:,.0f}원")
+                # 💡 [추가] 매수 완료 알림 발송
+                if ENABLE_TRADE_NOTI:
+                    send_telegram(
+                        f"✅ [{ENGINE_TYPE} 매수 완료]\n"
+                        f"- 종목: {ticker}\n"
+                        f"- 단가: {curr_p:,.2f}원\n"
+                        f"- 금액: {amount:,.0f}원\n"
+                        f"- 슬롯: {slot_index}번"
+                    )
                 return True, curr_p, vol  # 💡 수정: 매수 성공 여부와 함께 단가, 수량 반환
             
     except Exception as e:
@@ -71,6 +80,16 @@ def execute_sell(ticker, volume, slot_index=1, profit_rate=0.0, realized_profit=
             db_manager.log_trade(ticker, "SELL", curr_p, volume, profit_rate, realized_profit)
             
             print(f"✅ [{ENGINE_TYPE}] {ticker} 슬롯 {slot_index} 매도 완료 (수익률: {profit_rate:+.2f}%)")
+            # 💡 [추가] 매도 완료 알림 발송 (수익금 및 수익률 포함)
+            if ENABLE_TRADE_NOTI:
+                icon = "📈" if realized_profit > 0 else "📉"
+                send_telegram(
+                    f"{icon} [{ENGINE_TYPE} 매도 완료]\n"
+                    f"- 종목: {ticker}\n"
+                    f"- 실현 손익: {realized_profit:+,.0f}원\n"
+                    f"- 수익률: {profit_rate:+.2f}%\n"
+                    f"- 단가: {curr_p:,.2f}원"
+                )
             return True
             
     except Exception as e:
