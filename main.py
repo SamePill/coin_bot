@@ -103,7 +103,7 @@ def evaluate_grid_candidates():
         top_grid_candidates = [item['ticker'] for item in sorted_scores[:GRID_TOTAL_SLOTS]]
         
         msg = f"🔍 [그리드 레이더] 신규 타겟 선정 완료\n- 후보: {', '.join(top_grid_candidates[:5])}..."
-        telegram_handler.send_telegram(msg)
+        send_telegram(msg)
     except Exception as e:
         print(f"❌ 후보 스캔 오류: {e}")
 
