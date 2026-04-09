@@ -29,13 +29,14 @@ services:
 # 🛡️ 1. 코어 엔진 (Core Engine)
   core-bot:
     <<: *bot-common
-    container_name: aegis_core
+    container_name: aegis_core_${ACCOUNT_ID}
     profiles: ["core","all"]
 #    restart: unless-stopped
 #    depends_on:
 #      - mariadb
     env_file: .env
     environment:
+      - ACCOUNT_ID=${ACCOUNT_ID}
       - ENGINE_TYPE=CORE
       - MAX_BUDGET=${CORE_MAX_BUDGET}
       - TARGET_SLOTS=2
@@ -44,13 +45,14 @@ services:
   # 🏹 2. 헌터 엔진 (Hunter Engine)
   hunter-bot:
     <<: *bot-common
-    container_name: aegis_hunter
+    container_name: aegis_hunter_${ACCOUNT_ID}
     profiles: ["hunter","all"]
 #    restart: unless-stopped
 #    depends_on:
 #      - mariadb
     env_file: .env
     environment:
+      - ACCOUNT_ID=${ACCOUNT_ID}
       - ENGINE_TYPE=HUNTER
       - MAX_BUDGET=${HUNTER_MAX_BUDGET}
       - TARGET_SLOTS=5
@@ -59,13 +61,14 @@ services:
   # 📊 3. 스마트 그리드 엔진 (Smart Grid Engine)
   grid-bot:
     <<: *bot-common
-    container_name: aegis_grid
+    container_name: aegis_grid_${ACCOUNT_ID}
     profiles: ["grid","all"]
 #    restart: unless-stopped
 #    depends_on:
 #      - mariadb
     env_file: .env
     environment:
+      - ACCOUNT_ID=${ACCOUNT_ID}
       - ENGINE_TYPE=GRID
       - MAX_BUDGET=${GRID_MAX_BUDGET}
       - TZ=Asia/Seoul
