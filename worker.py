@@ -23,6 +23,8 @@ def execute_buy(ticker, amount, slot_index=1):
         # 2. 이번 매수 금액을 합쳤을 때 할당된 MAX_BUDGET을 초과하는지 검사
         if already_used + amount > MAX_BUDGET:
             print(f"⚠️ [{ENGINE_TYPE}] 예산 한도 초과! (현재 사용: {already_used:,.0f} / 한도: {MAX_BUDGET:,.0f})")
+            print("💤 5분간 대기 후 다시 확인합니다...")
+            time.sleep(300)  # ⬅️ 300초(5분) 동안 루프를 멈춤
             return False
 
         # 3. 업비트 실제 시장가 매수 주문
