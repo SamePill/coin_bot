@@ -65,6 +65,7 @@ top_grid_candidates = []
 last_grid_eval_time = None
 next_day_core_targets, next_day_hunter_targets = {}, {}
 last_target_fetch_time = None
+budget_lock_notified = {'SCALP': False, 'GRID': False, 'CLASSIC_GRID': False}
 
 print(f"====================================================")
 print(f"🏆 [시스템] Aegis-Elite V17.17 무결성 패치 가동 (모드: {ENGINE_TYPE})")
@@ -544,9 +545,13 @@ def run_grid_engine(now):
                 # 💡 [안전장치 추가] 신규 진입 시 예산 사전 검사
                 already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in grid_pos_items.values())
                 if (already_used + unit_size) > MAX_BUDGET:
-                    print(f"🛑 [GRID 예산 잠금] 신규 진입 예산 초과. 사냥 보류.")
+                    if not budget_lock_notified['GRID']:
+                        print(f"🛑 [GRID 예산 잠금] 신규 진입 예산 초과. 사냥 보류.")
+                        budget_lock_notified['GRID'] = True
                     break # 예산이 꽉 찼으면 스캔 중단
 
+                budget_lock_notified['GRID'] = False
+                
                 # 💡 [수정] 슬롯 인덱스 중복(덮어쓰기) 방지를 위한 안전한 번호 부여 로직
                 existing_slots = [p['slot_index'] for p in bot_positions.values() if p['ticker'] == ticker and p['engine'] == 'GRID']
                 new_slot_idx = 1
@@ -655,6 +660,8 @@ def run_scalp_engine(now):
             krw_balance = safe_balances.get('KRW', 0.0)
 
             if krw_balance >= base_unit and (already_used + base_unit) <= MAX_BUDGET:
+                budget_lock_notified['SCALP'] = False
+
                 print(f"📉 [스캘핑 방어] {ticker} {next_level}차 진입 시도 (가볍게 1배수 투입)")
                 success, exec_price, exec_vol = worker.execute_buy(ticker, base_unit, pos['slot_index'])
                 if success:
@@ -672,8 +679,9 @@ def run_scalp_engine(now):
                     except AttributeError: pass
             else:
                 if (already_used + base_unit) > MAX_BUDGET:
-                    if now.second % 10 == 0:
+                    if not budget_lock_notified['SCALP']: 
                         print(f"🛑 [SCALP 예산 잠금] {ticker} 물타기 생략 (사용량: {already_used:,.0f} / 한도: {MAX_BUDGET:,.0f})")
+                        budget_lock_notified['SCALP'] = True
             continue
 
     # [2] 빈 슬롯 채우기
@@ -697,9 +705,14 @@ def run_scalp_engine(now):
                 unit_size = SCALP_UNIT_LIST[current_count] if current_count < len(SCALP_UNIT_LIST) else SCALP_UNIT_LIST[-1]
                 
                 if (already_used + unit_size) > MAX_BUDGET:
-                    if now.second % 10 == 0:
-                        print(f"🛑 [SCALP 예산 잠금] 신규 진입 예산 초과. 사냥 보류.")
-                    break 
+                    # 💡 알림이 아직 안 나갔을 때만 단 1회 출력하고 플래그 잠금
+                    if not budget_lock_notified['SCALP']: 
+                        print(f"🛑 [SCALP 예산 잠금] 신규 진입 예산 초과. 사냥 보류. (매도 발생 시까지 알림 음소거)")
+                        budget_lock_notified['SCALP'] = True
+                    break
+
+                # 💡 예산 여유가 있어 매수 프로세스로 넘어가면 침묵 플래그 해제
+                budget_lock_notified['SCALP'] = False
                 
                 existing_slots = [p['slot_index'] for p in bot_positions.values() if p['ticker'] == ticker and p['engine'] == 'SCALP']
                 new_slot_idx = 1
@@ -885,10 +898,13 @@ def run_classic_grid_engine(now):
                 
                 # 예산 한도 체크
                 if (already_used + unit_size) > MAX_BUDGET:
-                    if now.second % 10 == 0:
+                    if not budget_lock_notified['CLASSIC_GRID']:
                         print(f"🛑 [{ENGINE_NAME} 예산 잠금] 신규 진입 예산 초과.")
+                        budget_lock_notified['CLASSIC_GRID'] = True
                     break 
                 
+                budget_lock_notified['CLASSIC_GRID'] = False
+
                 # 빈 슬롯 번호 찾기
                 existing_slots = [p['slot_index'] for p in bot_positions.values() if p['ticker'] == ticker and p['engine'] == ENGINE_NAME]
                 new_slot_idx = 1
