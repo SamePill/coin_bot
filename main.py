@@ -572,14 +572,22 @@ def run_grid_engine(now):
 
 
 # -------------------------------------------------------------
-# ⚡ 엔진 4: 스캘핑 (SCALP) - 고회전 짤짤이 로직 (안전장치 강화판)
-# -------------------------------------------------------------
-# -------------------------------------------------------------
-# ⚡ 엔진 4: 스캘핑 (SCALP) - 고회전 짤짤이 로직 (무결성 패치 완료)
+# ⚡ 엔진 4: 스캘핑 (SCALP) - 고회전 짤짤이 로직 (완전 독립형 설정 적용)
 # -------------------------------------------------------------
 def run_scalp_engine(now):
-    global bot_positions, top_grid_candidates
+    global bot_positions, top_grid_candidates, GRID_TOTAL_SLOTS, USE_MULTI_SLOT, MAX_SLOTS_PER_COIN, UNIT_LIST
     
+    # 💡 [신규] SCALP 전용 환경변수 로드 (값이 없으면 GRID 설정을 기본값으로 사용합니다)
+    SCALP_TOTAL_SLOTS = int(os.getenv('SCALP_TOTAL_SLOTS', GRID_TOTAL_SLOTS))
+    SCALP_USE_MULTI_SLOT = os.getenv('SCALP_USE_MULTI_SLOT', str(USE_MULTI_SLOT)).lower() == 'true'
+    SCALP_MAX_SLOTS_PER_COIN = int(os.getenv('SCALP_MAX_SLOTS_PER_COIN', MAX_SLOTS_PER_COIN))
+    
+    scalp_units_str = os.getenv('SCALP_UNIT_SIZES')
+    if scalp_units_str:
+        SCALP_UNIT_LIST = [float(x.strip()) for x in scalp_units_str.split(',')]
+    else:
+        SCALP_UNIT_LIST = UNIT_LIST
+
     scalp_pos_items = {k: v for k, v in bot_positions.items() if v['engine'] == 'SCALP'}
     active_tickers = {} 
     
@@ -611,14 +619,12 @@ def run_scalp_engine(now):
         if profit_rate >= 0.006: 
             if sell_vol <= 0:
                 print(f"⚠️ [잔고 불일치] {ticker} 매도 불가 (장부: {pos['vol']} / 실제: {actual_balance}).")
-                # 장부와 실제가 다르면 에러를 막기 위해 해당 슬롯을 강제로 비우고 리셋합니다.
                 del bot_positions[key]
                 continue
 
             realized_krw = (curr_p - pos['buy']) * sell_vol
             print(f"⚡ [스캘핑 익절] {ticker} 단기 수익 달성! ({profit_rate*100:+.2f}%)")
             
-            # 확정된 안전 수량(sell_vol)으로만 매도를 집행합니다.
             if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw):
                 del bot_positions[key]
             continue
@@ -629,13 +635,13 @@ def run_scalp_engine(now):
         current_level = pos.get('buy_level', 1) 
         if profit_rate <= -0.010 and current_level < 2:  
             next_level = current_level + 1
-            base_unit = UNIT_LIST[pos['slot_index']-1] if (pos['slot_index']-1) < len(UNIT_LIST) else UNIT_LIST[-1]
+            # 💡 [적용] SCALP 전용 UNIT_LIST 사용
+            base_unit = SCALP_UNIT_LIST[pos['slot_index']-1] if (pos['slot_index']-1) < len(SCALP_UNIT_LIST) else SCALP_UNIT_LIST[-1]
             
-            # 💡 [안전장치 3] SCALP 엔진이 사용 중인 총 예산 계산 (MAX_BUDGET 방어용)
+            # 💡 [안전장치 3] SCALP 엔진이 사용 중인 총 예산 계산
             already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in scalp_pos_items.values())
             krw_balance = safe_balances.get('KRW', 0.0)
 
-            # 현금 잔고가 충분하고, 이번 매수를 해도 MAX_BUDGET을 넘지 않을 때만 집행
             if krw_balance >= base_unit and (already_used + base_unit) <= MAX_BUDGET:
                 print(f"📉 [스캘핑 방어] {ticker} {next_level}차 진입 시도 (가볍게 1배수 투입)")
                 success, exec_price, exec_vol = worker.execute_buy(ticker, base_unit, pos['slot_index'])
@@ -654,31 +660,34 @@ def run_scalp_engine(now):
                     except AttributeError: pass
             else:
                 if (already_used + base_unit) > MAX_BUDGET:
-                    # 💡 [버그 패치 1] 스팸 및 과부하 방지: 매 10초에 한 번만 로그를 출력하도록 제어
                     if now.second % 10 == 0:
                         print(f"🛑 [SCALP 예산 잠금] {ticker} 물타기 생략 (사용량: {already_used:,.0f} / 한도: {MAX_BUDGET:,.0f})")
             continue
 
     # [2] 빈 슬롯 채우기
     total_active_slots = sum(active_tickers.values())
-    remaining_slots = GRID_TOTAL_SLOTS - total_active_slots
     
-    # 💡 [버그 패치 2-A] 루프 진입 전 현재 사용 금액을 미리 계산하여 변수에 담아둡니다.
+    # 💡 [적용] SCALP 전용 최대 슬롯 제한
+    remaining_slots = SCALP_TOTAL_SLOTS - total_active_slots
+    
     already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in scalp_pos_items.values())
     
     if remaining_slots > 0 and current_regime not in ["ICE_AGE", "CAUTION"]:
         for ticker in top_grid_candidates:
             if remaining_slots <= 0: break
-            current_count = active_tickers.get(ticker, 0)
             
-            if current_count < 1: 
-                unit_size = UNIT_LIST[current_count] if current_count < len(UNIT_LIST) else UNIT_LIST[-1]
+            current_count = active_tickers.get(ticker, 0)
+            # 💡 [적용] SCALP 전용 멀티슬롯 토글 및 상한선
+            slot_limit = SCALP_MAX_SLOTS_PER_COIN if SCALP_USE_MULTI_SLOT else 1
+            
+            if current_count < slot_limit: 
+                # 💡 [적용] SCALP 전용 UNIT_LIST에서 차등 투자금 배정
+                unit_size = SCALP_UNIT_LIST[current_count] if current_count < len(SCALP_UNIT_LIST) else SCALP_UNIT_LIST[-1]
                 
-                # 💡 [안전장치 4] 갱신되는 already_used를 기반으로 예산 초과 여부 확인
                 if (already_used + unit_size) > MAX_BUDGET:
                     if now.second % 10 == 0:
                         print(f"🛑 [SCALP 예산 잠금] 신규 진입 예산 초과. 사냥 보류.")
-                    break # 예산이 꽉 찼으면 더 이상 후보를 스캔하지 않고 루프 탈출
+                    break 
                 
                 existing_slots = [p['slot_index'] for p in bot_positions.values() if p['ticker'] == ticker and p['engine'] == 'SCALP']
                 new_slot_idx = 1
@@ -698,11 +707,10 @@ def run_scalp_engine(now):
                     except AttributeError: pass
                     remaining_slots -= 1
                     active_tickers[ticker] = active_tickers.get(ticker, 0) + 1
-                    
-                    # 💡 [버그 패치 2-B] 매수 성공 시 'already_used'에 지금 쓴 금액을 바로 더해줍니다! (예산 관통 방지)
                     already_used += (exec_price * exec_vol)
                     
-                    print(f"🚀 [SCALP 신규] {ticker} 스캘핑 슬롯 배치 완료")
+                    print(f"🚀 [SCALP 신규] {ticker} 스캘핑 슬롯 {new_slot_idx} 배치 완료 (투입: {unit_size:,.0f}원)")
+
 # -------------------------------------------------------------
 # 🔄 메인 제어 루프
 # -------------------------------------------------------------

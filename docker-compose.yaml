@@ -84,7 +84,7 @@ services:
     environment:
       - ACCOUNT_ID=${ACCOUNT_ID}
       - ENGINE_TYPE=SCALP              # 💡 새로운 SCALP 엔진 지정
-      - SCALP_MAX_BUDGET=${SCALP_MAX_BUDGET}
+      - MAX_BUDGET=${SCALP_MAX_BUDGET}
       - ENABLE_TELEGRAM_COMMANDS=False # 💡 텔레그램 리스너 충돌 방지
       - TZ=Asia/Seoul
     network_mode: "host"
