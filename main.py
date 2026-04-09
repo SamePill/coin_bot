@@ -21,8 +21,8 @@ MAX_SLOTS_PER_COIN = int(os.getenv('MAX_SLOTS_PER_COIN', 2))
 UNIT_LIST = [float(x) for x in os.getenv('GRID_UNIT_SIZES', '10000,30000').split(',')]
 
 SCALP_TOTAL_SLOTS = int(os.getenv('SCALP_TOTAL_SLOTS', 5))
-SCALP_USE_MULTI_SLOT = os.getenv('SCALP_USE_MULTI_SLOT', 'True').lower() == 'true'
-SCALP_MAX_SLOTS_PER_COIN = int(os.getenv('SCALP_MAX_SLOTS_PER_COIN', 2))
+SCALP_TOTAL_SLOTS = os.getenv('SCALP_USE_MULTI_SLOT', 'True').lower() == 'true'
+SCALP_TOTAL_SLOTS = int(os.getenv('SCALP_MAX_SLOTS_PER_COIN', 2))
 
 
 # 💡 [V17.18] Monkey Patching (API 호출 초과 시 오토 힐링 추가)
@@ -67,7 +67,7 @@ print(f"====================================================")
 print(f"🏆 [시스템] Aegis-Elite V17.17 무결성 패치 가동 (모드: {ENGINE_TYPE})")
 if ENGINE_TYPE == 'GRID':
     print(f"🎰 그리드 슬롯: {GRID_TOTAL_SLOTS} | 다중슬롯: {USE_MULTI_SLOT} (Max {MAX_SLOTS_PER_COIN})")
-elif ENGINE_TYPE == 'SCALP':
+elif ENGINE_TYPE in ['CLASSIC_GRID', 'SCALP']:
     print(f"🎰 Scalp 슬롯: {SCALP_TOTAL_SLOTS} | 다중슬롯: {SCALP_USE_MULTI_SLOT} (Max {SCALP_MAX_SLOTS_PER_COIN})")
 else:
     print(f"🎰 타겟 슬롯: {TARGET_SLOTS}")
@@ -719,6 +719,209 @@ def run_scalp_engine(now):
                     print(f"🚀 [SCALP 신규] {ticker} 스캘핑 슬롯 {new_slot_idx} 배치 완료 (투입: {unit_size:,.0f}원)")
 
 # -------------------------------------------------------------
+# ⚡ 엔진 5: Classic Grid
+# -------------------------------------------------------------
+def run_classic_grid_engine(now):
+    """
+    🕸️ ASIS 복원판: 클래식 거미줄 그리드 (부분 매수/매도 + 다중 슬롯)
+    - 특징: 평단가 위아래로 거미줄을 치며 물량을 15%씩 조절합니다.
+    - 다중 투자: SCALP_TOTAL_SLOTS 등 스캘핑용 다중 슬롯 변수를 그대로 상속하여 사용합니다.
+    """
+    global bot_positions, top_grid_candidates, current_regime
+    
+    # 💡 [1. SCALP 변수를 활용한 다중 슬롯 설정 로드]
+    CG_TOTAL_SLOTS = int(os.getenv('SCALP_TOTAL_SLOTS', 5))
+    CG_USE_MULTI_SLOT = os.getenv('SCALP_USE_MULTI_SLOT', 'True').lower() == 'true'
+    CG_MAX_SLOTS_PER_COIN = int(os.getenv('SCALP_MAX_SLOTS_PER_COIN', 2))
+    
+    scalp_units_str = os.getenv('SCALP_UNIT_SIZES')
+    if scalp_units_str:
+        CG_UNIT_LIST = [float(x.strip()) for x in scalp_units_str.split(',')]
+    else:
+        CG_UNIT_LIST = [float(x) for x in os.getenv('GRID_UNIT_SIZES', '10000,30000').split(',')]
+
+    # 현재 엔진 이름 (DB 관리를 위해 CLASSIC_GRID로 명명)
+    ENGINE_NAME = 'CLASSIC_GRID'
+    
+    cg_pos_items = {k: v for k, v in bot_positions.items() if v['engine'] == ENGINE_NAME}
+    active_tickers = {}
+    
+    watch_list = list(set([pos['ticker'] for pos in cg_pos_items.values()] + top_grid_candidates))
+    current_prices = pyupbit.get_current_price(watch_list) if watch_list else {}
+    if not isinstance(current_prices, dict): current_prices = {}
+
+    balances = upbit.get_balances()
+    safe_balances = {b['currency']: float(b['balance']) for b in balances} if isinstance(balances, list) else {}
+    krw_balance = safe_balances.get('KRW', 0.0)
+
+    # =====================================================================
+    # [1] 기존 슬롯 관리 (거미줄 매수/매도 및 종목 교체)
+    # =====================================================================
+    for key, pos in list(cg_pos_items.items()):
+        ticker = pos['ticker']
+        curr_p = current_prices.get(ticker)
+        if not curr_p: continue
+        
+        active_tickers[ticker] = active_tickers.get(ticker, 0) + 1
+        profit_rate = (curr_p - pos['buy']) / pos['buy']
+        
+        # 메모리 복구 시 필요 변수 초기화 (ASIS 로직)
+        if 'last_grid_price' not in pos: 
+            pos['last_grid_price'] = curr_p
+        if 'allocated_krw' not in pos: 
+            # 하단 물타기를 위한 예비 예산 (투자금의 50% 정도를 잔여 예산으로 간주)
+            pos['allocated_krw'] = pos.get('invested_amount', CG_UNIT_LIST[0]) * 0.5 
+
+        # -------------------------------------------------------------
+        # ⚖️ 1. 스왑(교체) 로직: 타겟에서 밀려났고 1% 이상 수익이면 전량 방출
+        # -------------------------------------------------------------
+        if ticker not in top_grid_candidates and profit_rate > 0.01:
+            sell_vol = min(pos['vol'], safe_balances.get(ticker.split('-')[1], 0.0))
+            if sell_vol > 0:
+                realized_krw = (curr_p - pos['buy']) * sell_vol
+                res = upbit.sell_market_order(ticker, sell_vol)
+                if res:
+                    db_manager.update_position(ENGINE_NAME, ticker, 0, 0, 'SELL', pos['slot_index'])
+                    db_manager.log_trade(ticker, "SWAP_GRID", curr_p, sell_vol, profit_rate*100, realized_krw)
+                    print(f"⚖️ [방출] {ticker} 타겟 제외로 인한 교체 방출 ({profit_rate*100:+.2f}%)")
+                    send_telegram(f"⚖️ [{ENGINE_NAME}] {ticker} 사냥터 이전 전량 매도\n- 실현수익: {realized_krw:+,.0f}원")
+                    del bot_positions[key]
+            continue
+
+        # -------------------------------------------------------------
+        # 📈 2. 그리드 상단 익절 (15% 부분 매도)
+        # -------------------------------------------------------------
+        step = analyzer.get_grid_step(ticker) or pos.get('grid_step', curr_p * 0.01)
+        
+        if curr_p >= pos['last_grid_price'] + step:
+            # 보유량의 15% 또는 최소 6000원치 매도
+            target_sell_vol = max(pos['vol'] * 0.15, 6000 / curr_p)
+            actual_sell_vol = min(target_sell_vol, safe_balances.get(ticker.split('-')[1], 0.0))
+            
+            if actual_sell_vol > 0:
+                res = upbit.sell_market_order(ticker, actual_sell_vol)
+                if res:
+                    time.sleep(1)
+                    curr_p_after = pyupbit.get_current_price(ticker) or curr_p
+                    realized_krw = (curr_p_after - pos['buy']) * actual_sell_vol
+                    
+                    # 메모리 갱신
+                    pos['vol'] -= actual_sell_vol
+                    pos['last_grid_price'] = curr_p_after
+                    
+                    # 리밸런싱 예산 초과 방지 (수익금을 할당 예산에 추가)
+                    pos['allocated_krw'] += (actual_sell_vol * curr_p_after)
+                    
+                    db_manager.log_trade(ticker, "SELL_GRID_PART", curr_p_after, actual_sell_vol, profit_rate*100, realized_krw)
+                    print(f"🕸️ [그리드 상단] {ticker} 부분 익절 완료 (+{realized_krw:,.0f}원)")
+                    
+                    # 💡 NOW DB 구조에서 부분 매도를 반영하기 위한 Custom 업데이트
+                    import pymysql
+                    from config import DB_CONF
+                    try:
+                        conn = pymysql.connect(**DB_CONF)
+                        with conn.cursor() as cur:
+                            sql = """
+                                UPDATE current_positions 
+                                SET volume = volume - %s, 
+                                    invested_amount = invested_amount - %s 
+                                WHERE account_id = %s AND engine_name = %s AND ticker = %s AND slot_index = %s
+                            """
+                            cur.execute(sql, (actual_sell_vol, (pos['buy'] * actual_sell_vol), db_manager.ACCOUNT_ID, ENGINE_NAME, ticker, pos['slot_index']))
+                        conn.commit(); conn.close()
+                    except Exception as e:
+                        print(f"DB 부분 매도 업데이트 오류: {e}")
+
+        # -------------------------------------------------------------
+        # 📉 3. 그리드 하단 물타기 (할당 예산의 15% 부분 매수)
+        # -------------------------------------------------------------
+        elif curr_p <= pos['last_grid_price'] - step and curr_p > analyzer.get_ema200(ticker):
+            buy_krw = max(pos['allocated_krw'] * 0.15, 6000)
+            
+            if krw_balance >= buy_krw and pos['allocated_krw'] >= buy_krw:
+                res = upbit.buy_market_order(ticker, buy_krw)
+                if res:
+                    time.sleep(1)
+                    curr_p_after = pyupbit.get_current_price(ticker) or curr_p
+                    bought_vol = (buy_krw * 0.9995) / curr_p_after
+                    
+                    # 평단가 및 메모리 갱신
+                    new_vol = pos['vol'] + bought_vol
+                    new_avg = ((pos['buy'] * pos['vol']) + (curr_p_after * bought_vol)) / new_vol
+                    
+                    pos['buy'] = new_avg
+                    pos['vol'] = new_vol
+                    pos['last_grid_price'] = curr_p_after
+                    pos['allocated_krw'] -= buy_krw
+                    
+                    db_manager.log_trade(ticker, "BUY_GRID_PART", curr_p_after, bought_vol, 0.0, 0.0)
+                    # NOW의 update_position은 ON DUPLICATE KEY로 평단/수량을 누적해줌
+                    db_manager.update_position(ENGINE_NAME, ticker, curr_p_after, bought_vol, 'BUY', pos['slot_index'])
+                    
+                    print(f"🕸️ [그리드 하단] {ticker} 부분 매수(물타기) 완료. (새 평단: {new_avg:,.0f}원)")
+
+    # =====================================================================
+    # [2] 빈 슬롯 채우기 (다중 슬롯 적용 신규 진입)
+    # =====================================================================
+    total_active_slots = sum(active_tickers.values())
+    remaining_slots = CG_TOTAL_SLOTS - total_active_slots
+    
+    already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in cg_pos_items.values())
+    
+    if remaining_slots > 0 and current_regime not in ["ICE_AGE"]:
+        for ticker in top_grid_candidates:
+            if remaining_slots <= 0: break
+            
+            current_count = active_tickers.get(ticker, 0)
+            slot_limit = CG_MAX_SLOTS_PER_COIN if CG_USE_MULTI_SLOT else 1
+            
+            if current_count < slot_limit: 
+                unit_size = CG_UNIT_LIST[current_count] if current_count < len(CG_UNIT_LIST) else CG_UNIT_LIST[-1]
+                
+                # 예산 한도 체크
+                if (already_used + unit_size) > MAX_BUDGET:
+                    if now.second % 10 == 0:
+                        print(f"🛑 [{ENGINE_NAME} 예산 잠금] 신규 진입 예산 초과.")
+                    break 
+                
+                # 빈 슬롯 번호 찾기
+                existing_slots = [p['slot_index'] for p in bot_positions.values() if p['ticker'] == ticker and p['engine'] == ENGINE_NAME]
+                new_slot_idx = 1
+                while new_slot_idx in existing_slots: new_slot_idx += 1
+                
+                curr_p = current_prices.get(ticker)
+                if not curr_p: continue
+
+                res = upbit.buy_market_order(ticker, unit_size)
+                if res:
+                    time.sleep(1.5) 
+                    curr_p_after = pyupbit.get_current_price(ticker) or curr_p
+                    exec_vol = (unit_size * 0.9995) / curr_p_after
+                    
+                    key = f"{ticker}_slot_{new_slot_idx}"
+                    bot_positions[key] = {
+                        'ticker': ticker, 
+                        'vol': exec_vol, 
+                        'buy': curr_p_after, 
+                        'slot_index': new_slot_idx, 
+                        'engine': ENGINE_NAME, 
+                        'buy_level': 1,
+                        'last_grid_price': curr_p_after,        # ASIS 전용
+                        'grid_step': analyzer.get_grid_step(ticker), # ASIS 전용
+                        'allocated_krw': unit_size * 0.5,       # ASIS 전용 (하단 매수용 예비비)
+                        'invested_amount': unit_size
+                    }
+                    
+                    db_manager.update_position(ENGINE_NAME, ticker, curr_p_after, exec_vol, 'BUY', new_slot_idx)
+                    db_manager.log_trade(ticker, "BUY_GRID_INIT", curr_p_after, exec_vol, 0.0, 0.0)
+                    
+                    remaining_slots -= 1
+                    active_tickers[ticker] = active_tickers.get(ticker, 0) + 1
+                    already_used += unit_size
+                    
+                    print(f"🚀 [{ENGINE_NAME} 신규 진입] {ticker} 슬롯 {new_slot_idx} 거미줄 전개 완료!")
+
+# -------------------------------------------------------------
 # 🔄 메인 제어 루프
 # -------------------------------------------------------------
 bot_positions = db_manager.recover_bot_positions(upbit)
@@ -814,6 +1017,7 @@ while True:
         elif ENGINE_TYPE == 'HUNTER': run_hunter_engine(now)
         elif ENGINE_TYPE == 'GRID': run_grid_engine(now)
         elif ENGINE_TYPE == 'SCALP': run_scalp_engine(now)
+        elif ENGINE_TYPE == 'CLASSIC_GRID': run_classic_grid_engine(now)
 
         # 💡 루프가 에러 없이 정상적으로 끝까지 도달하면 에러 카운터 초기화
         consecutive_errors = 0
