@@ -158,6 +158,25 @@ def run_grid_engine(now):
         active_tickers[ticker] = active_tickers.get(ticker, 0) + 1
         profit_rate = (curr_p - pos['buy']) / pos['buy']
         
+        # -------------------------------------------------------------
+        # 💡 [신규] 고점 기록 및 트레일링 스탑 준비
+        # -------------------------------------------------------------
+        if 'peak_price' not in pos: pos['peak_price'] = curr_p
+        pos['peak_price'] = max(pos['peak_price'], curr_p)
+
+        # -------------------------------------------------------------
+        # ✂️ [신규] 1. 타임 컷 (Time Cut) 로직
+        # -------------------------------------------------------------
+        # 7일(168시간) 이상 보유 중인데 수익률이 1% 미만이면 강제 회수하여 기회비용 확보
+        # db_manager.recover_bot_positions에서 last_update를 읽어와야 작동합니다.
+        last_update = pos.get('created_at', datetime.now())
+        if datetime.now() - last_update > timedelta(days=7) and profit_rate < 0.01:
+            print(f"⏳ [타임 컷] {ticker} 슬롯 {pos['slot_index']} 장기 체류로 인한 강제 회수")
+            if worker.execute_sell(ticker, pos['vol'], pos['slot_index'], profit_rate*100, 0):
+                send_telegram(f"✂️ [Time Cut] {ticker} 기회비용 확보를 위해 포지션 종료")
+                del bot_positions[key]
+                continue
+
         # --- [교체 판별 로직] ---
         if ticker not in top_grid_candidates and profit_rate > 0.01:
             # 💡 [수정] DB에 기록될 실제 원화(KRW) 실현 수익 계산
@@ -166,6 +185,27 @@ def run_grid_engine(now):
                 print(f"⚖️ [슬롯 교체] {ticker} (수익권 방출 후 새 종목 대기)")
                 del bot_positions[key]
                 continue
+
+        # -------------------------------------------------------------
+        # 🚀 [신규] 2. 불타기 (Upward Pyramiding) 로직
+        # -------------------------------------------------------------
+        # 대세 상승장(SUPER_BULL)이면서 거래량 폭증 시 추가 베팅으로 수익 극대화
+        if current_regime == "SUPER_BULL" and analyzer.check_volume_spike(ticker):
+            # 수익 중(+1.5% 이상)이고 아직 1차 진입 상태인 경우만 실행
+            if 0.015 < profit_rate < 0.03 and pos.get('buy_level', 1) == 1:
+                print(f"🔥 [불타기] {ticker} 추세 돌파 감지! 비중 확대")
+                # 기존 유닛 사이즈의 1.5배를 추가 매수
+                success, exec_p, exec_v = worker.execute_buy(ticker, UNIT_LIST[0] * 1.5, pos['slot_index'])
+                if success:
+                    # 불타기 성공 시 평단가와 수량 메모리 갱신
+                    new_vol = pos['vol'] + exec_v
+                    new_avg = ((pos['buy'] * pos['vol']) + (exec_p * exec_v)) / new_vol
+                    bot_positions[key]['buy'] = new_avg
+                    bot_positions[key]['vol'] = new_vol
+                    bot_positions[key]['buy_level'] = 2 # 레벨을 올려서 중복 방지
+                    db_manager.update_position_state(key, new_avg, new_vol, 2)
+                    continue
+
 
         # --- [하이브리드 매수/매도 코어 로직] ---
         grid_step_percent = get_dynamic_grid_step(ticker)
@@ -231,6 +271,19 @@ def run_grid_engine(now):
                 del bot_positions[key]
                 continue
 
+            # -------------------------------------------------------------
+            # 🛡️ [신규] 3. 수익 보존형 손절 (Trailing Stop)
+            # -------------------------------------------------------------
+            # 불타기를 했거나 수익이 충분할 때, 고점 대비 1.5% 하락하면 즉시 매도하여 수익 확정
+            drop_from_peak = (pos['peak_price'] - curr_p) / pos['peak_price']
+            if profit_rate > 0.01 and drop_from_peak > 0.015:
+                realized_krw = (curr_p - pos['buy']) * pos['vol']
+                print(f"🛑 [익절 보존] {ticker} 고점 대비 하락으로 수익 확정 ({profit_rate*100:+.2f}%)")
+                if worker.execute_sell(ticker, pos['vol'], pos['slot_index'], profit_rate*100, realized_krw):
+                    del bot_positions[key]
+                    continue
+
+
     # [2] 빈 슬롯 채우기 (다중 슬롯 및 유동적 배분)
     total_active_slots = sum(active_tickers.values())
     remaining_slots = GRID_TOTAL_SLOTS - total_active_slots
@@ -266,7 +319,8 @@ def run_grid_engine(now):
                         'buy': exec_price, 
                         'slot_index': new_slot_idx, 
                         'engine': 'GRID',
-                        'buy_level': 1  
+                        'buy_level': 1 ,
+                        'invested_amount': exec_price * exec_vol
                     }
                     
                     try:

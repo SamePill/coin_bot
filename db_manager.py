@@ -59,16 +59,19 @@ def get_engine_invested_total(engine_name):
     finally:
         conn.close()
 
+# -------------------------------------------------------------
+# 🗄️ 현장 장부 관리 (update_position)
+# -------------------------------------------------------------
 def update_position(engine_name, ticker, price, volume, side, slot_index=1):
-    """💡 매수/매도 시 슬롯 및 계정별로 장부를 최신화합니다."""
     conn = pymysql.connect(**DB_CONF)
     try:
         with conn.cursor() as cur:
             if side == 'BUY':
-                # 💡 [수정] PK에 account_id가 추가되었으므로 INSERT 문에 반영
+                # 💡 [수정] INSERT 시 created_at은 DB DEFAULT를 사용하거나 NOW()를 명시할 수 있습니다.
+                # ON DUPLICATE KEY UPDATE 시에는 created_at을 건드리지 않아 최초 진입 시간이 보존됩니다.
                 sql = """
-                    INSERT INTO current_positions (account_id, engine_name, ticker, slot_index, buy_price, volume, invested_amount)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO current_positions (account_id, engine_name, ticker, slot_index, buy_price, volume, invested_amount, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
                     ON DUPLICATE KEY UPDATE 
                         buy_price = ((buy_price * volume) + (%s * %s)) / (volume + %s),
                         invested_amount = invested_amount + %s,
@@ -77,27 +80,25 @@ def update_position(engine_name, ticker, price, volume, side, slot_index=1):
                 invested = price * volume
                 cur.execute(sql, (ACCOUNT_ID, engine_name, ticker, slot_index, price, volume, invested, price, volume, volume, invested, volume))
             else:
-                # 💡 [수정] 내 계정(ACCOUNT_ID)의 장부만 지우도록 격리
                 sql = "DELETE FROM current_positions WHERE account_id = %s AND engine_name = %s AND ticker = %s AND slot_index = %s"
                 cur.execute(sql, (ACCOUNT_ID, engine_name, ticker, slot_index))
         conn.commit()
     except Exception as e:
-        print(f"❌ 장부 갱신 오류 ({ticker} Slot {slot_index}): {e}")
+        print(f"❌ 장부 갱신 오류 ({ticker}): {e}")
     finally:
         conn.close()
 
 # -------------------------------------------------------------
-# 🔄 기억 복구 로직 (현장 장부 기반)
+# 🔄 기억 복구 로직 (recover_bot_positions)
 # -------------------------------------------------------------
 def recover_bot_positions(upbit):
-    """DB에서 '현재 계정'의 포지션만 복구합니다."""
     positions = {}
     conn = None
     try:
         conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
         with conn.cursor(pymysql.cursors.DictCursor) as cur:
-            # 💡 [수정] account_id 로 필터링하여 남의 계정 포지션을 가져오지 않도록 차단
-            sql = "SELECT ticker, engine_name, slot_index, buy_price, volume, buy_level FROM current_positions WHERE account_id = %s"
+            # 💡 [수정] SELECT 절에 created_at 추가
+            sql = "SELECT ticker, engine_name, slot_index, buy_price, volume, buy_level, invested_amount, created_at FROM current_positions WHERE account_id = %s"
             cur.execute(sql, (ACCOUNT_ID,))
             rows = cur.fetchall()
             
@@ -112,9 +113,11 @@ def recover_bot_positions(upbit):
                     'vol': float(r['volume']),
                     'slot_index': slot_idx,
                     'engine': r['engine_name'], 
-                    'buy_level': r['buy_level'] if r['buy_level'] is not None else 1
+                    'buy_level': r['buy_level'] if r['buy_level'] is not None else 1,
+                    'created_at': r['created_at'], # 💡 [추가] 최초 진입 시간 복구
+                    'invested_amount': float(r['invested_amount'])
                 }
-        print(f"🔄 [{ACCOUNT_ID}] 계정의 DB에서 {len(positions)}개의 포지션을 성공적으로 복구했습니다.")
+        print(f"🔄 [{ACCOUNT_ID}] DB에서 {len(positions)}개의 포지션을 복구했습니다. (최초 진입일 포함)")
     except Exception as e:
         print(f"❌ 포지션 복구 실패: {e}")
     finally:
