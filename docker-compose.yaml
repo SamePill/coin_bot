@@ -24,7 +24,7 @@ services:
     profiles: ["core"]
     restart: unless-stopped
     depends_on:
-      - db
+      - mariadb
     env_file: .env
     environment:
       - ENGINE_TYPE=CORE
@@ -39,7 +39,7 @@ services:
     profiles: ["hunter"]
     restart: unless-stopped
     depends_on:
-      - db
+      - mariadb
     env_file: .env
     environment:
       - ENGINE_TYPE=HUNTER
@@ -54,7 +54,7 @@ services:
     profiles: ["grid"]
     restart: unless-stopped
     depends_on:
-      - db
+      - mariadb
     env_file: .env
     environment:
       - ENGINE_TYPE=GRID
