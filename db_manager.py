@@ -95,7 +95,7 @@ def recover_bot_positions(upbit):
         conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
         with conn.cursor(pymysql.cursors.DictCursor) as cur:
             # buy_level 컬럼 추가 조회
-            sql = "SELECT ticker, engine, slot_index, buy_price, volume, buy_level FROM current_positions"
+            sql = "SELECT ticker, engine_name, slot_index, buy_price, volume, buy_level FROM current_positions"
             cur.execute(sql)
             rows = cur.fetchall()
             
@@ -109,7 +109,7 @@ def recover_bot_positions(upbit):
                     'buy': float(r['buy_price']),
                     'vol': float(r['volume']),
                     'slot_index': slot_idx,
-                    'engine': r['engine'],
+                    'engine_name': r['engine'],
                     'buy_level': r['buy_level'] if r['buy_level'] is not None else 1
                 }
         print(f"🔄 DB에서 {len(positions)}개의 포지션을 성공적으로 복구했습니다.")

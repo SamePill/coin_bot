@@ -17,6 +17,6 @@ sudo firewall-cmd --list-all
 
 
 -- 기존 계정의 접속 허용 범위를 전체(%)로 확장하거나 새로 생성
-CREATE USER 'coin_user'@'%' IDENTIFIED BY '패스워드..1!!!';
+CREATE USER 'coin_user'@'%' IDENTIFIED BY 'nssss@';
 GRANT ALL PRIVILEGES ON coin_bot_db.* TO 'coin_user'@'%';
 FLUSH PRIVILEGES;
