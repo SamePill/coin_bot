@@ -24,6 +24,9 @@ SCALP_TOTAL_SLOTS = int(os.getenv('SCALP_TOTAL_SLOTS', 5))
 SCALP_TOTAL_SLOTS = os.getenv('SCALP_USE_MULTI_SLOT', 'True').lower() == 'true'
 SCALP_TOTAL_SLOTS = int(os.getenv('SCALP_MAX_SLOTS_PER_COIN', 2))
 
+CG_TOTAL_SLOTS = int(os.getenv('SCALP_TOTAL_SLOTS', 5))
+CG_USE_MULTI_SLOT = os.getenv('SCALP_USE_MULTI_SLOT', 'True').lower() == 'true'
+CG_MAX_SLOTS_PER_COIN = int(os.getenv('SCALP_MAX_SLOTS_PER_COIN', 2))
 
 # 💡 [V17.18] Monkey Patching (API 호출 초과 시 오토 힐링 추가)
 _original_get_current_price = pyupbit.get_current_price
@@ -730,9 +733,9 @@ def run_classic_grid_engine(now):
     global bot_positions, top_grid_candidates, current_regime
     
     # 💡 [1. SCALP 변수를 활용한 다중 슬롯 설정 로드]
-    CG_TOTAL_SLOTS = int(os.getenv('SCALP_TOTAL_SLOTS', 5))
-    CG_USE_MULTI_SLOT = os.getenv('SCALP_USE_MULTI_SLOT', 'True').lower() == 'true'
-    CG_MAX_SLOTS_PER_COIN = int(os.getenv('SCALP_MAX_SLOTS_PER_COIN', 2))
+ #   CG_TOTAL_SLOTS = int(os.getenv('SCALP_TOTAL_SLOTS', 5))
+ #   CG_USE_MULTI_SLOT = os.getenv('SCALP_USE_MULTI_SLOT', 'True').lower() == 'true'
+ #   CG_MAX_SLOTS_PER_COIN = int(os.getenv('SCALP_MAX_SLOTS_PER_COIN', 2))
     
     scalp_units_str = os.getenv('SCALP_UNIT_SIZES')
     if scalp_units_str:
