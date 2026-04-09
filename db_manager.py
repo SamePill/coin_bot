@@ -5,7 +5,7 @@ import os
 from config import DB_CONF, CORE_UNIVERSE, send_telegram
 
 # 환경 변수에서 현재 엔진 타입 로드 (기본값 CORE)
-ENGINE_TYPE = os.getenv('ENGINE_TYPE', 'CORE').upper()
+ENGINE_TYPE = os.getenv('ENGINE_TYPE', 'WHAT?').upper()
 
 # -------------------------------------------------------------
 # 📊 매매 기록 (trade_logs)
