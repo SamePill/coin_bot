@@ -57,7 +57,7 @@ def execute_sell(ticker, volume, slot_index=1, profit_rate=0.0, realized_profit=
     try:
         # 1. 업비트 실제 시장가 매도 주문
         res = upbit.sell_market_order(ticker, volume)
-        if res:
+        if res and 'uuid' in res:
             # 체결 대기 및 현재가 조회
             time.sleep(1)
             curr_p = pyupbit.get_current_price(ticker)

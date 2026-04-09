@@ -8,3 +8,5 @@ coin_env/
 
 # DB 볼륨 데이터 (도커 마운트 폴더)
 db_data/
+
+.DS_Store

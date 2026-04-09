@@ -25,7 +25,14 @@ TOTAL_SLOTS = CORE_SLOTS + HUNTER_SLOTS + GRID_SLOTS
 # [config.py 내부에 추가/수정]
 # GRID_TICKER = "KRW-ETH" # (기존 단일 코인 방식 - 삭제 또는 주석)
 # 스마트 그리드 유동적 사냥터 풀 (V17.14)
-GRID_POOL = ["KRW-ETH", "KRW-SOL", "KRW-XRP", "KRW-DOGE", "KRW-LINK"]
+#GRID_POOL = ["KRW-ETH", "KRW-SOL", "KRW-XRP", "KRW-DOGE", "KRW-LINK"]
+# 💡 스마트 그리드 유동적 사냥터 풀 (V17.17 확장판 - 총 15종목)
+GRID_POOL = [
+    "KRW-BTC", "KRW-ETH", "KRW-SOL", "KRW-XRP", "KRW-DOGE", # 기존 및 대장주
+    "KRW-LINK", "KRW-NEAR", "KRW-SUI", "KRW-AVAX", "KRW-APT", # 고성능 메인넷 및 오라클
+    "KRW-STX", "KRW-ARB", "KRW-OP",                           # 인프라 & L2
+    "KRW-ADA", "KRW-SHIB"                                     # 클래식 & 밈 볼륨
+]
 
 VOLUME_SPIKE_RATIO = 3.0       
 

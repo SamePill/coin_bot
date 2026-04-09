@@ -85,7 +85,11 @@ def evaluate_grid_candidates():
     global top_grid_candidates
     try:
         print("🔍 [그리드 레이더] 최적 사냥터 스캔 중...")
-        all_tickers = pyupbit.get_tickers(fiat="KRW")
+        # 마켓 전체 스캔을 대상으로 할 경우 사용
+        # all_tickers = pyupbit.get_tickers(fiat="KRW")
+        # config.py에 정의된 GRID_POOL 목록만 가져와서 스캔 대상으로 삼습니다.
+        all_tickers = GRID_POOL
+
         scores = []
         
         for t in all_tickers:
@@ -122,7 +126,11 @@ def run_grid_engine(now):
     active_tickers = {} 
     
     watch_list = list(set([pos['ticker'] for pos in grid_pos_items.values()] + top_grid_candidates))
+    
     current_prices = pyupbit.get_current_price(watch_list) if watch_list else {}
+    if not isinstance(current_prices, dict): 
+        current_prices = {} # None이나 float으로 올 경우를 완벽 차단
+
 
     # [1] 기존 슬롯 관리 (매매 및 교체)
     for key, pos in list(grid_pos_items.items()):
@@ -252,6 +260,9 @@ bot_positions = db_manager.recover_bot_positions(upbit)
 for k, v in bot_positions.items():
     if 'buy_level' not in v:
         v['buy_level'] = 1
+
+# 텔레그램 봇 백그라운드 가동 (이 한 줄 필수 추가!)
+telegram_handler.start_telegram_listener(bot_positions, lambda: MAX_BUDGET)
 
 while True:
     try:
