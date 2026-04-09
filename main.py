@@ -474,13 +474,20 @@ def run_grid_engine(now):
             # 💡 [안전장치 추가] GRID 엔진 총 사용 예산 사전 검사
             already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in grid_pos_items.values())
             if (already_used + invest_amount) > MAX_BUDGET:
-                print(f"🛑 [GRID 예산 잠금] {ticker} {next_level}차 물타기 보류 (사용량: {already_used:,.0f} / 한도: {MAX_BUDGET:,.0f})")
+                # 💡 [수정] 알림이 아직 안 나갔을 때만 단 1회 출력
+                if not budget_lock_notified.get('GRID', False):
+                    print(f"🛑 [GRID 예산 잠금] {ticker} {next_level}차 물타기 보류 (사용량: {already_used:,.0f} / 한도: {MAX_BUDGET:,.0f})")
+                    budget_lock_notified['GRID'] = True
                 continue # worker로 보내지 않고 스킵 (5분 정지 방지)
 
             if krw_balance < invest_amount:
-                print(f"❌ [예산 초과] {ticker} {next_level}차 진입 실패. (필요: {invest_amount:,.0f}원 / 잔고: {krw_balance:,.0f}원)")
+                # 잔고 부족 메시지도 스팸이 될 수 있으므로 동일하게 처리 가능합니다.
+                if not budget_lock_notified.get('GRID', False):
+                    print(f"❌ [예산 초과] {ticker} {next_level}차 진입 실패. (필요: {invest_amount:,.0f}원 / 잔고: {krw_balance:,.0f}원)")
+                    budget_lock_notified['GRID'] = True
                 continue
 
+            budget_lock_notified['GRID'] = False
             print(f"📉 [하락 방어] {ticker} {next_level}차 진입 시도 ({invest_amount:,.0f}원 / {weight}배 가중치)")
             
             # 💡 수정: 정확히 봇이 매수한 수량과 단가만 받아와 누적 적용합니다.
