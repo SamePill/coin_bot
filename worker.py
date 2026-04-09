@@ -25,7 +25,7 @@ def execute_buy(ticker, amount, slot_index=1):
             print(f"⚠️ [{ENGINE_TYPE}] 예산 한도 초과! (현재 사용: {already_used:,.0f} / 한도: {MAX_BUDGET:,.0f})")
             print("💤 5분간 대기 후 다시 확인합니다...")
             time.sleep(300)  # ⬅️ 300초(5분) 동안 루프를 멈춤
-            return False
+            return False, 0, 0  # 💡 수정: 실패 시 단가, 수량 0 반환
 
         # 3. 업비트 실제 시장가 매수 주문
         res = upbit.buy_market_order(ticker, amount)
@@ -45,11 +45,11 @@ def execute_buy(ticker, amount, slot_index=1):
                 db_manager.log_trade(ticker, "BUY", curr_p, vol)
                 
                 print(f"✅ [{ENGINE_TYPE}] {ticker} 슬롯 {slot_index} 매수 성공: {amount:,.0f}원")
-                return True
+                return True, curr_p, vol  # 💡 수정: 매수 성공 여부와 함께 단가, 수량 반환
             
     except Exception as e:
         print(f"❌ [{ENGINE_TYPE}] 매수 실행 오류 ({ticker}): {e}")
-    return False
+    return False, 0, 0  # 💡 수정: 실패 시 단가, 수량 0 반환
 
 def execute_sell(ticker, volume, slot_index=1, profit_rate=0.0, realized_profit=0.0):
     """

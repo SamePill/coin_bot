@@ -177,22 +177,24 @@ def run_grid_engine(now):
 
             print(f"📉 [하락 방어] {ticker} {next_level}차 진입 시도 ({invest_amount:,.0f}원 / {weight}배 가중치)")
             
-            if worker.execute_buy(ticker, invest_amount, pos['slot_index']):
+            # 💡 수정: 정확히 봇이 매수한 수량과 단가만 받아와 누적 적용합니다.
+            success, exec_price, exec_vol = worker.execute_buy(ticker, invest_amount, pos['slot_index'])
+            if success:
                 time.sleep(1.5) 
                 
-                real_vol = upbit.get_balance(ticker)
-                real_avg_price = upbit.get_avg_buy_price(ticker)
+                new_vol = pos['vol'] + exec_vol
+                new_avg_price = ((pos['buy'] * pos['vol']) + (exec_price * exec_vol)) / new_vol
                 
-                bot_positions[key]['buy'] = real_avg_price
-                bot_positions[key]['vol'] = real_vol
+                bot_positions[key]['buy'] = new_avg_price
+                bot_positions[key]['vol'] = new_vol
                 bot_positions[key]['buy_level'] = next_level
                 
                 try:
-                    db_manager.update_position_state(key, real_avg_price, real_vol, next_level)
+                    db_manager.update_position_state(key, new_avg_price, new_vol, next_level)
                 except AttributeError:
                     print("⚠️ db_manager에 update_position_state 함수가 등록되지 않아 DB 저장이 스킵되었습니다.")
 
-                print(f"✅ 물타기 성공! [{ticker}] 진짜 평단가: {real_avg_price:,.0f}원 (현재 {next_level}차)")
+                print(f"✅ 물타기 성공! [{ticker}] 진짜 평단가: {new_avg_price:,.0f}원 (현재 {next_level}차)")
                 continue
 
         # 2️⃣ 상승 시: 익절 매도
@@ -229,23 +231,23 @@ def run_grid_engine(now):
                 curr_p_new = current_prices.get(ticker)
                 if not curr_p_new: continue
 
-                if worker.execute_buy(ticker, unit_size, new_slot_idx):
+                # 💡 수정: 신규 진입 시 봇이 매수한 단가와 수량만 장부에 기록합니다.
+                success, exec_price, exec_vol = worker.execute_buy(ticker, unit_size, new_slot_idx)
+                if success:
                     time.sleep(1.5) 
-                    real_vol = upbit.get_balance(ticker)
-                    real_avg_price = upbit.get_avg_buy_price(ticker)
                     
                     key = f"{ticker}_slot_{new_slot_idx}"
                     bot_positions[key] = {
                         'ticker': ticker, 
-                        'vol': real_vol, 
-                        'buy': real_avg_price, 
+                        'vol': exec_vol, 
+                        'buy': exec_price, 
                         'slot_index': new_slot_idx, 
                         'engine': 'GRID',
                         'buy_level': 1  
                     }
                     
                     try:
-                        db_manager.update_position_state(key, real_avg_price, real_vol, 1)
+                        db_manager.update_position_state(key, exec_price, exec_vol, 1)
                     except AttributeError:
                         pass
 
