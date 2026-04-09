@@ -21,8 +21,8 @@ MAX_SLOTS_PER_COIN = int(os.getenv('MAX_SLOTS_PER_COIN', 2))
 UNIT_LIST = [float(x) for x in os.getenv('GRID_UNIT_SIZES', '10000,30000').split(',')]
 
 SCALP_TOTAL_SLOTS = int(os.getenv('SCALP_TOTAL_SLOTS', 5))
-SCALP_TOTAL_SLOTS = os.getenv('SCALP_USE_MULTI_SLOT', 'True').lower() == 'true'
-SCALP_TOTAL_SLOTS = int(os.getenv('SCALP_MAX_SLOTS_PER_COIN', 2))
+SCALP_USE_MULTI_SLOT = os.getenv('SCALP_USE_MULTI_SLOT', 'True').lower() == 'true'
+SCALP_MAX_SLOTS_PER_COIN = int(os.getenv('SCALP_MAX_SLOTS_PER_COIN', 2))
 
 CG_TOTAL_SLOTS = int(os.getenv('SCALP_TOTAL_SLOTS', 5))
 CG_USE_MULTI_SLOT = os.getenv('SCALP_USE_MULTI_SLOT', 'True').lower() == 'true'
@@ -70,8 +70,10 @@ print(f"====================================================")
 print(f"🏆 [시스템] Aegis-Elite V17.17 무결성 패치 가동 (모드: {ENGINE_TYPE})")
 if ENGINE_TYPE == 'GRID':
     print(f"🎰 그리드 슬롯: {GRID_TOTAL_SLOTS} | 다중슬롯: {USE_MULTI_SLOT} (Max {MAX_SLOTS_PER_COIN})")
-elif ENGINE_TYPE in ['CLASSIC_GRID', 'SCALP']:
+elif ENGINE_TYPE == 'SCALP':
     print(f"🎰 Scalp 슬롯: {SCALP_TOTAL_SLOTS} | 다중슬롯: {SCALP_USE_MULTI_SLOT} (Max {SCALP_MAX_SLOTS_PER_COIN})")
+elif ENGINE_TYPE == 'CLASSIC_GRID':
+        print(f"🎰 Scalp 슬롯: {CG_TOTAL_SLOTS} | 다중슬롯: {CG_USE_MULTI_SLOT} (Max {CG_MAX_SLOTS_PER_COIN})")    
 else:
     print(f"🎰 타겟 슬롯: {TARGET_SLOTS}")
 print(f"💰 할당 예산: {MAX_BUDGET:,.0f}원")
