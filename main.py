@@ -349,6 +349,8 @@ last_daily_report_day = None
 # 💡 [추가] 연속 에러 알림 스팸 방지용 카운터
 consecutive_errors = 0
 
+last_daily_report_hour = -1  # 💡 추가: 마지막으로 보고서를 보낸 시간 기록
+
 while True:
     try:
         now = datetime.now()
@@ -368,6 +370,27 @@ while True:
             
             send_telegram(report_msg)
             last_daily_report_day = now.day # 발송 완료 기록
+
+        # 💡 [수정] 정기 보고서 발송 (8, 13, 18, 23시)
+        report_hours = [8, 13, 18, 23]
+        if now.hour in report_hours and now.minute == 0 and last_daily_report_hour != now.hour:
+            rows = db_manager.get_today_performance()
+            # db_manager.ACCOUNT_ID를 사용하여 어떤 계정의 보고서인지 명시합니다.
+            report_msg = f"📊 [{db_manager.ACCOUNT_ID}] 정기 수익 보고 ({now.hour}시)\n\n"
+            
+            if not rows:
+                report_msg += "현재까지 완료된 매매 내역이 없습니다."
+            else:
+                total_krw = 0
+                for r in rows:
+                    # 수익금(total_profit)과 수익률(avg_rate)을 함께 표시합니다.
+                    report_msg += f"- {r['engine']}: {r['total_profit']:+,.0f}원 ({r['avg_rate']:+.2f}%)\n"
+                    total_krw += r['total_profit']
+                report_msg += f"──────────────\n💵 당일 총 합계: {total_krw:+,.0f}원"
+            
+            send_telegram(report_msg)
+            last_daily_report_hour = now.hour # 💡 해당 시간 발송 완료 기록
+
 
         if now.minute % 15 == 0:
             current_regime = analyzer.get_market_regime(current_regime)
