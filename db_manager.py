@@ -97,9 +97,13 @@ def recover_bot_positions(upbit):
     try:
         conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
         with conn.cursor(pymysql.cursors.DictCursor) as cur:
-            # 💡 [수정] SELECT 절에 created_at 추가
-            sql = "SELECT ticker, engine_name, slot_index, buy_price, volume, buy_level, invested_amount, created_at FROM current_positions WHERE account_id = %s"
-            cur.execute(sql, (ACCOUNT_ID,))
+            # 💡 [수정] WHERE 조건에 engine_name 추가 (타 엔진의 종목을 가져오는 버그 방지)
+            sql = """
+                SELECT ticker, engine_name, slot_index, buy_price, volume, buy_level, invested_amount, created_at 
+                FROM current_positions 
+                WHERE account_id = %s AND engine_name = %s
+            """
+            cur.execute(sql, (ACCOUNT_ID, ENGINE_TYPE))
             rows = cur.fetchall()
             
             for r in rows:
@@ -117,7 +121,8 @@ def recover_bot_positions(upbit):
                     'created_at': r['created_at'], # 💡 [추가] 최초 진입 시간 복구
                     'invested_amount': float(r['invested_amount'])
                 }
-        print(f"🔄 [{ACCOUNT_ID}] DB에서 {len(positions)}개의 포지션을 복구했습니다. (최초 진입일 포함)")
+        # 💡 [수정] 출력문에도 어떤 엔진의 포지션을 복구했는지 명시하도록 개선
+        print(f"🔄 [{ACCOUNT_ID} - {ENGINE_TYPE}] DB에서 {len(positions)}개의 포지션을 복구했습니다. (최초 진입일 포함)")
     except Exception as e:
         print(f"❌ 포지션 복구 실패: {e}")
     finally:
