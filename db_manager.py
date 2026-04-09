@@ -88,54 +88,37 @@ def update_position(engine_name, ticker, price, volume, side, slot_index=1):
 # 🔄 기억 복구 로직 (현장 장부 기반)
 # -------------------------------------------------------------
 def recover_bot_positions(upbit):
-    """💡 [V17.17 업그레이드] current_positions 테이블을 기반으로 봇의 상태를 완벽히 복구합니다."""
-    bot_positions = {}
+    """DB에서 현재 포지션과 매수 차수(buy_level)를 복구합니다."""
+    positions = {}
+    conn = None
     try:
-        balances = upbit.get_balances()
-        if not isinstance(balances, list): return bot_positions
-        
-        # 실제 계좌 잔고를 딕셔너리로 변환 (빠른 조회용)
-        real_balances = {f"KRW-{b['currency']}": float(b['balance']) for b in balances if b['currency'] != 'KRW'}
-        
-        conn = pymysql.connect(**DB_CONF, charset='utf8mb4', cursorclass=pymysql.cursors.DictCursor)
-        with conn.cursor() as cur:
-            # 현재 이 엔진이 관리해야 할 장부 데이터 전체 로드
-            sql = "SELECT * FROM current_positions WHERE engine_name = %s"
-            cur.execute(sql, (ENGINE_TYPE,))
+        conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
+        with conn.cursor(pymysql.cursors.DictCursor) as cur:
+            # buy_level 컬럼 추가 조회
+            sql = "SELECT ticker, engine, slot_index, buy_price, volume, buy_level FROM current_positions"
+            cur.execute(sql)
             rows = cur.fetchall()
             
-            for row in rows:
-                ticker = row['ticker']
-                slot_idx = row['slot_index']
-                db_vol = float(row['volume'])
-                
-                # 봇 식별자 키 생성 (예: KRW-BTC_slot_1)
+            for r in rows:
+                ticker = r['ticker']
+                slot_idx = r['slot_index']
                 key = f"{ticker}_slot_{slot_idx}"
                 
-                # 업비트 실제 잔고 확인 (장투 물량 보호용)
-                if ticker in real_balances:
-                    actual_vol = real_balances[ticker]
-                    # 장부 수량과 실제 수량 중 작은 것을 선택 (안전장치)
-                    final_vol = min(db_vol, actual_vol)
-                    
-                    if final_vol > 0.00001:
-                        curr_price = pyupbit.get_current_price(ticker)
-                        bot_positions[key] = {
-                            'ticker': ticker,
-                            'vol': final_vol,
-                            'buy': float(row['buy_price']),
-                            'peak': curr_price if curr_price else float(row['buy_price']),
-                            'slot_index': slot_idx,
-                            'engine': ENGINE_TYPE,
-                            'half_sold': False  # 복구 시 초기화
-                        }
-        conn.close()
-        if bot_positions:
-            send_telegram(f"🔄 [{ENGINE_TYPE}] {len(bot_positions)}개 슬롯 상태 복구 완료.")
-    except Exception as e: 
-        print(f"❌ 복구 중 오류: {e}")
-        
-    return bot_positions
+                positions[key] = {
+                    'ticker': ticker,
+                    'buy': float(r['buy_price']),
+                    'vol': float(r['volume']),
+                    'slot_index': slot_idx,
+                    'engine': r['engine'],
+                    'buy_level': r['buy_level'] if r['buy_level'] is not None else 1
+                }
+        print(f"🔄 DB에서 {len(positions)}개의 포지션을 성공적으로 복구했습니다.")
+    except Exception as e:
+        print(f"❌ 포지션 복구 실패: {e}")
+    finally:
+        if conn: conn.close()
+    
+    return positions
 
 # -------------------------------------------------------------
 # 📈 보고서 생성
@@ -164,3 +147,28 @@ def get_today_performance():
     finally:
         if 'conn' in locals() and conn:
             conn.close()
+
+def update_position_state(key, real_avg_price, real_vol, next_level):
+    """물타기(피라미딩) 성공 후, 진짜 평단가와 매수 차수를 DB에 안전하게 기록합니다."""
+    # key 예시: "KRW-BTC_slot_1" -> 여기서 ticker와 slot_index를 분리
+    parts = key.split('_slot_')
+    if len(parts) != 2: return
+    
+    ticker = parts[0]
+    slot_index = int(parts[1])
+    conn = None
+    
+    try:
+        conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
+        with conn.cursor() as cur:
+            sql = """
+                UPDATE current_positions 
+                SET buy_price = %s, volume = %s, buy_level = %s, updated_at = NOW()
+                WHERE ticker = %s AND slot_index = %s
+            """
+            cur.execute(sql, (real_avg_price, real_vol, next_level, ticker, slot_index))
+        conn.commit()
+    except Exception as e:
+        print(f"❌ DB 상태 업데이트 실패 ({ticker}): {e}")
+    finally:
+        if conn: conn.close()
