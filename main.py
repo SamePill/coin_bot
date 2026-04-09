@@ -341,7 +341,18 @@ for k, v in bot_positions.items():
         v['buy_level'] = 1
 
 # 텔레그램 봇 백그라운드 가동 (이 한 줄 필수 추가!)
-telegram_handler.start_telegram_listener(bot_positions, lambda: MAX_BUDGET)
+# -------------------------------------------------------------
+# 🔄 메신저 당번 지정 (Conflict 에러 방지)
+# -------------------------------------------------------------
+# 환경 변수에서 ENABLE_TELEGRAM_COMMANDS를 읽어옵니다. (기본값은 False)
+ENABLE_TELEGRAM_COMMANDS = os.getenv('ENABLE_TELEGRAM_COMMANDS', 'False').lower() == 'true'
+
+if ENABLE_TELEGRAM_COMMANDS:
+    # 💡 도커 컴포즈에서 True로 설정된 단 하나의 엔진만 이 코드를 실행합니다.
+    telegram_handler.start_telegram_listener(bot_positions, lambda: MAX_BUDGET)
+    print(f"🤖 [{ENGINE_TYPE}] 텔레그램 명령 수신 당번 가동 시작!")
+else:
+    print(f"🔇 [{ENGINE_TYPE}] 텔레그램 명령 수신을 스킵합니다. (중복 방지 모드)")
 
 # 자동 일일 보고를 위한 변수
 last_daily_report_day = None
