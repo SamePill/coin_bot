@@ -20,6 +20,11 @@ MAX_SLOTS_PER_COIN = int(os.getenv('MAX_SLOTS_PER_COIN', 2))
 # 투자 단위 리스트 (A, B, C... 순서대로 적용)
 UNIT_LIST = [float(x) for x in os.getenv('GRID_UNIT_SIZES', '10000,30000').split(',')]
 
+SCALP_TOTAL_SLOTS = int(os.getenv('SCALP_TOTAL_SLOTS', 5))
+SCALP_USE_MULTI_SLOT = os.getenv('SCALP_USE_MULTI_SLOT', 'True').lower() == 'true'
+SCALP_MAX_SLOTS_PER_COIN = int(os.getenv('SCALP_MAX_SLOTS_PER_COIN', 2))
+
+
 # 💡 [V17.18] Monkey Patching (API 호출 초과 시 오토 힐링 추가)
 _original_get_current_price = pyupbit.get_current_price
 
@@ -62,6 +67,8 @@ print(f"====================================================")
 print(f"🏆 [시스템] Aegis-Elite V17.17 무결성 패치 가동 (모드: {ENGINE_TYPE})")
 if ENGINE_TYPE == 'GRID':
     print(f"🎰 그리드 슬롯: {GRID_TOTAL_SLOTS} | 다중슬롯: {USE_MULTI_SLOT} (Max {MAX_SLOTS_PER_COIN})")
+elif ENGINE_TYPE == 'SCALP':
+    print(f"🎰 Scalp 슬롯: {SCALP_TOTAL_SLOTS} | 다중슬롯: {SCALP_USE_MULTI_SLOT} (Max {SCALP_MAX_SLOTS_PER_COIN})")
 else:
     print(f"🎰 타겟 슬롯: {TARGET_SLOTS}")
 print(f"💰 할당 예산: {MAX_BUDGET:,.0f}원")
@@ -575,12 +582,12 @@ def run_grid_engine(now):
 # ⚡ 엔진 4: 스캘핑 (SCALP) - 고회전 짤짤이 로직 (완전 독립형 설정 적용)
 # -------------------------------------------------------------
 def run_scalp_engine(now):
-    global bot_positions, top_grid_candidates, GRID_TOTAL_SLOTS, USE_MULTI_SLOT, MAX_SLOTS_PER_COIN, UNIT_LIST
+#    global bot_positions, top_grid_candidates, GRID_TOTAL_SLOTS, USE_MULTI_SLOT, MAX_SLOTS_PER_COIN, UNIT_LIST
     
     # 💡 [신규] SCALP 전용 환경변수 로드 (값이 없으면 GRID 설정을 기본값으로 사용합니다)
-    SCALP_TOTAL_SLOTS = int(os.getenv('SCALP_TOTAL_SLOTS', GRID_TOTAL_SLOTS))
-    SCALP_USE_MULTI_SLOT = os.getenv('SCALP_USE_MULTI_SLOT', str(USE_MULTI_SLOT)).lower() == 'true'
-    SCALP_MAX_SLOTS_PER_COIN = int(os.getenv('SCALP_MAX_SLOTS_PER_COIN', MAX_SLOTS_PER_COIN))
+#    SCALP_TOTAL_SLOTS = int(os.getenv('SCALP_TOTAL_SLOTS', GRID_TOTAL_SLOTS))
+#    SCALP_USE_MULTI_SLOT = os.getenv('SCALP_USE_MULTI_SLOT', str(USE_MULTI_SLOT)).lower() == 'true'
+#    SCALP_MAX_SLOTS_PER_COIN = int(os.getenv('SCALP_MAX_SLOTS_PER_COIN', MAX_SLOTS_PER_COIN))
     
     scalp_units_str = os.getenv('SCALP_UNIT_SIZES')
     if scalp_units_str:
