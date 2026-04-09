@@ -17,12 +17,57 @@ services:
     volumes:
       - ./db_data:/var/lib/mysql
 
-  aegis-bot:
+# 🛡️ 1. 코어 엔진 (Core Engine)
+  core-bot:
     build: .
-    container_name: aegis_v17_bot
+    container_name: aegis_core
+    profiles: ["core"]
     restart: unless-stopped
     depends_on:
-      - mariadb
-    env_file: .env   # 💡 봇 컨테이너에도 환경 변수 주입 
+      - db
+    env_file: .env
     environment:
+      - ENGINE_TYPE=CORE
+      - MAX_BUDGET=${CORE_MAX_BUDGET}
+      - TARGET_SLOTS=2
       - TZ=Asia/Seoul
+
+  # 🏹 2. 헌터 엔진 (Hunter Engine)
+  hunter-bot:
+    build: .
+    container_name: aegis_hunter
+    profiles: ["hunter"]
+    restart: unless-stopped
+    depends_on:
+      - db
+    env_file: .env
+    environment:
+      - ENGINE_TYPE=HUNTER
+      - MAX_BUDGET=${HUNTER_MAX_BUDGET}
+      - TARGET_SLOTS=5
+      - TZ=Asia/Seoul
+
+  # 📊 3. 스마트 그리드 엔진 (Smart Grid Engine)
+  grid-bot:
+    build: .
+    container_name: aegis_grid
+    profiles: ["grid"]
+    restart: unless-stopped
+    depends_on:
+      - db
+    env_file: .env
+    environment:
+      - ENGINE_TYPE=GRID
+      - MAX_BUDGET=${GRID_MAX_BUDGET}
+      - TZ=Asia/Seoul
+
+  # 통합봇    
+#  aegis-bot:
+#    build: .
+#    container_name: aegis_v17_bot
+#    restart: unless-stopped
+#    depends_on:
+#      - mariadb
+#    env_file: .env   # 💡 봇 컨테이너에도 환경 변수 주입 
+#    environment:
+#      - TZ=Asia/Seoul

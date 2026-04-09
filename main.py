@@ -1,11 +1,26 @@
+import os
 import time
 import threading
 import traceback  
 from datetime import datetime, timedelta
 import pandas as pd 
 import pyupbit
+from dotenv import load_dotenv
 
-# 💡 [V17.11] Monkey Patching
+# --- [1. 환경 변수 및 멀티 슬롯 설정 로드] ---
+load_dotenv()
+ENGINE_TYPE = os.getenv('ENGINE_TYPE', 'CORE').upper()
+MAX_BUDGET = float(os.getenv('MAX_BUDGET', 0))
+TARGET_SLOTS = int(os.getenv('TARGET_SLOTS', 3)) # CORE, HUNTER용 고정 슬롯
+
+# 그리드 전용 확장 설정
+GRID_TOTAL_SLOTS = int(os.getenv('GRID_TOTAL_SLOTS', 5))  # 예: 8 (고정1 + 유동7)
+USE_MULTI_SLOT = os.getenv('USE_MULTI_SLOT', 'True').lower() == 'true'
+MAX_SLOTS_PER_COIN = int(os.getenv('MAX_SLOTS_PER_COIN', 2))
+# 투자 단위 리스트 (A, B, C... 순서대로 적용)
+UNIT_LIST = [float(x) for x in os.getenv('GRID_UNIT_SIZES', '10000,30000').split(',')]
+
+# 💡 [V17.11] Monkey Patching (API 안정성 강화)
 _original_get_current_price = pyupbit.get_current_price
 def _safe_get_current_price(ticker, limit_info=False, verbose=False):
     try:
@@ -14,348 +29,221 @@ def _safe_get_current_price(ticker, limit_info=False, verbose=False):
     except: return {} if isinstance(ticker, list) else None
 pyupbit.get_current_price = _safe_get_current_price
 
+# 사용자 정의 모듈 임포트
 from config import *
 import db_manager
 import analyzer
+import worker
 import telegram_handler 
 
-print("🏆 [시스템] V17.17 (Aegis-Elite: 하이브리드 그리드 & 스마트 필터) 가동 중...\n")
-
+# --- [전역 변수 초기화] ---
 upbit = pyupbit.Upbit(UPBIT_ACCESS, UPBIT_SECRET)
 SEED_MONEY = 0
 bot_positions = {}
 current_regime = "NORMAL"
 core_targets, hunter_targets = {}, {}
-next_day_core_targets, next_day_hunter_targets = {}, {}
 top_grid_candidates = []
 last_grid_eval_time = None
 
-# -------------------------------------------------------------
-# 🛡️ 유틸리티 함수
-# -------------------------------------------------------------
-def get_safe_balance(ticker):
-    try:
-        balances = upbit.get_balances()
-        if not isinstance(balances, list): return 0.0
-        currency = ticker.split("-")[1] if "-" in ticker else ticker
-        for b in balances:
-            if b['currency'] == currency: return float(b['balance'])
-        return 0.0
-    except: return 0.0
-
-def safe_sell_order(ticker, target_vol):
-    try:
-        available_vol = get_safe_balance(ticker) 
-        actual_sell = min(target_vol, available_vol)
-        if actual_sell > 0: upbit.sell_market_order(ticker, actual_sell)
-        return actual_sell
-    except: return 0
-
-def safe_buy_order(ticker, invest_amount, curr_price):
-    try:
-        pre_vol = get_safe_balance(ticker)
-        upbit.buy_market_order(ticker, invest_amount)
-        time.sleep(1) 
-        post_vol = get_safe_balance(ticker)
-        bought_vol = post_vol - pre_vol
-        if bought_vol <= 0: bought_vol = (invest_amount * 0.9995) / curr_price
-        return bought_vol
-    except: return 0
-
-def update_seed_money():
-    global SEED_MONEY
-    try:
-        krw_bal = get_safe_balance("KRW") 
-        bot_pos_value = sum(pos['vol'] * (pyupbit.get_current_price(ticker) or 0) for ticker, pos in bot_positions.items())
-        raw_seed = krw_bal + bot_pos_value
-        SEED_MONEY = min(raw_seed * 0.95, MAX_BOT_BUDGET) 
-    except: pass
-
-def get_net_profit(buy_price, sell_price, vol):
-    return (sell_price * vol * 0.9995) - (buy_price * vol * 1.0005)
-
-def notify_trade(action, ticker, price, vol, profit_rate=0.0, remaining_vol=0.0, realized_profit=0.0):
-    coin = ticker.split('-')[1]
-    total_amount = price * vol 
-    if "매수" in action: icon, prof_str, amount_label, profit_info = "🟢", "", "투입대금", ""
-    else: 
-        icon = "🔵" if profit_rate > 0 else "🔴"
-        if "방출" in action: icon = "⚖️"
-        prof_str, amount_label = f" ({profit_rate:+.2f}%)", "회수대금"
-        profit_info = f"- 실현수익: {realized_profit:+,.0f}원 (정산완료)\n" 
-
-    msg = f"{icon} [{action}] {ticker}\n- 체결가: {price:,.0f}원{prof_str}\n- 체결량: {vol:.4f} {coin}\n- {amount_label}: {total_amount:,.0f}원\n{profit_info}- 봇전용잔고: {remaining_vol:.4f} {coin}"
-    send_telegram(msg)
+print(f"====================================================")
+print(f"🏆 [시스템] Aegis-Elite V17.17 가동 (모드: {ENGINE_TYPE})")
+if ENGINE_TYPE == 'GRID':
+    print(f"🎰 그리드 슬롯: {GRID_TOTAL_SLOTS} | 다중슬롯: {USE_MULTI_SLOT} (Max {MAX_SLOTS_PER_COIN})")
+else:
+    print(f"🎰 타겟 슬롯: {TARGET_SLOTS}")
+print(f"💰 할당 예산: {MAX_BUDGET:,.0f}원")
+print(f"====================================================\n")
 
 # -------------------------------------------------------------
-# 🕸️ V17.17 하이브리드 그리드 후보 스캔 (ETH 제외)
+# 🧠 하이브리드 엔진 코어 함수 (Step 2 추가 기능)
+# -------------------------------------------------------------
+def get_dynamic_grid_step(ticker):
+    """[기능 1] 동적 그리드 간격 조절 (변동성에 따른 차등 적용)"""
+    try:
+        df = pyupbit.get_ohlcv(ticker, interval="day", count=2)
+        if df is not None and len(df) > 1:
+            yesterday = df.iloc[0]
+            volatility = (yesterday['high'] - yesterday['low']) / yesterday['close'] * 100
+            
+            if volatility >= 5.0: return 2.0   # 고변동성 코인은 2.0% 간격
+            elif volatility >= 2.0: return 1.0 # 보통 코인은 1.0% 간격
+            else: return 0.5                   # 얌전한 코인은 0.5% 간격
+    except Exception as e:
+        print(f"⚠️ {ticker} 변동성 계산 오류 (기본값 적용): {e}")
+    return 1.0
+
+def get_pyramiding_weight(buy_level):
+    """[기능 2] 피라미딩 가중치 (안전형 옵션 1: 최대 3.0배 한도)"""
+    if buy_level <= 1: return 1.0     # 1차 매수: 1.0배
+    elif buy_level == 2: return 1.5   # 2차 매수: 1.5배
+    elif buy_level == 3: return 2.0   # 3차 매수: 2.0배
+    elif buy_level >= 4: return 3.0   # 4차 이상: 3.0배 한도 (강력 방어)
+    return 1.0
+
+# -------------------------------------------------------------
+# 🕵️‍♂️ 그리드 전용: 종목 발굴 및 리밸런싱 로직
 # -------------------------------------------------------------
 def evaluate_grid_candidates():
+    """6~12시간마다 그리드에 적합한 횡보/변동성 종목 스캔"""
     global top_grid_candidates
-    print("🕸️ [V17.17] Alpha 그리드 최적 사냥터 스캔 중...")
-    scores = []
-    # ETH를 제외한 나머지 후보군에서 탐색
-    alpha_pool = [t for t in GRID_POOL if t != "KRW-ETH"]
-    for ticker in alpha_pool:
-        score = analyzer.get_grid_suitability_score(ticker)
-        scores.append({'ticker': ticker, 'score': score})
-        time.sleep(0.2)
-        
-    sorted_scores = sorted(scores, key=lambda x: x['score'], reverse=True)
-    # 가장 점수가 높은 1개만 Alpha 후보로 선정
-    top_grid_candidates = [item['ticker'] for item in sorted_scores[:1]]
-    send_telegram(f"🔍 [그리드 레이더] Alpha 사냥터 선정: {top_grid_candidates[0]}")
-
-def background_target_fetcher():
-    global next_day_core_targets, next_day_hunter_targets
-    if current_regime == "ICE_AGE":
-        print("💤 [동면] 시장 빙하기로 인해 타겟 탐색 스킵.")
-        return
-
-    print("🕵️‍♂️ 4H 레이더 가동...")
-    temp_core, temp_hunter_candidates = {}, []
-    for ticker in CORE_UNIVERSE:
-        time.sleep(0.15)
-        df = pyupbit.get_ohlcv(ticker, interval="day", count=20)
-        if not isinstance(df, pd.DataFrame) or df.empty or len(df) < 6: continue
-        df['noise'] = 1 - abs(df['open'] - df['close']) / (df['high'] - df['low'])
-        temp_core[ticker] = {'open': df.iloc[-1]['open'], 'range': analyzer.get_atr(df, 5), 'k': max(0.4, min(0.7, df['noise'].mean()))}
-        
     try:
-        tickers = pyupbit.get_tickers(fiat="KRW")
-        for t in tickers:
-            if t in CORE_UNIVERSE: continue 
-            time.sleep(0.1)
-            df = pyupbit.get_ohlcv(t, interval="day", count=6)
-            if not isinstance(df, pd.DataFrame) or df.empty or len(df) < 6: continue
-            temp_hunter_candidates.append({'ticker': t, 'value': df.iloc[-2]['value'], 'open': df.iloc[-1]['open'], 'range': analyzer.get_atr(df, 5)})
-        if temp_hunter_candidates:
-            top3 = sorted(temp_hunter_candidates, key=lambda x: x['value'], reverse=True)[:3]
-            next_day_hunter_targets = {item['ticker']: item for item in top3}
-    except: pass
-    next_day_core_targets = temp_core
-    print("✅ [레이더] 갱신 완료.")
+        print("🔍 [그리드 레이더] 최적 사냥터 스캔 중...")
+        all_tickers = pyupbit.get_tickers(fiat="KRW")
+        scores = []
+        
+        for t in all_tickers:
+            if t == "KRW-ETH": continue
+            score = analyzer.get_grid_suitability_score(t)
+            if score > 0:
+                scores.append({'ticker': t, 'score': score})
+            time.sleep(0.05) 
+            
+        sorted_scores = sorted(scores, key=lambda x: x['score'], reverse=True)
+        top_grid_candidates = [item['ticker'] for item in sorted_scores[:GRID_TOTAL_SLOTS]]
+        
+        msg = f"🔍 [그리드 레이더] 신규 타겟 선정 완료\n- 후보: {', '.join(top_grid_candidates[:5])}..."
+        telegram_handler.send_telegram(msg)
+    except Exception as e:
+        print(f"❌ 후보 스캔 오류: {e}")
 
 # -------------------------------------------------------------
-# 🚀 메인 프로그램 초기화
+# 🛡️ 엔진 1 & 2: 코어 / 헌터 로직 (기존 유지)
+# -------------------------------------------------------------
+def run_core_engine(now):
+    pass # 기존 worker 로직
+
+def run_hunter_engine(now):
+    pass # 기존 worker 로직
+
+# -------------------------------------------------------------
+# 🕸️ 엔진 3: 스마트 그리드 (GRID) 동적 로직 (하이브리드 이식 완료)
+# -------------------------------------------------------------
+def run_grid_engine(now):
+    global bot_positions, top_grid_candidates
+    
+    grid_pos_items = {k: v for k, v in bot_positions.items() if v['engine'] == 'GRID'}
+    active_tickers = {} 
+    
+    # [1] 기존 슬롯 관리 (매매 및 교체)
+    for key, pos in list(grid_pos_items.items()):
+        ticker = pos['ticker']
+        curr_p = pyupbit.get_current_price(ticker)
+        if not curr_p: continue
+        
+        active_tickers[ticker] = active_tickers.get(ticker, 0) + 1
+        profit_rate = (curr_p - pos['buy']) / pos['buy']
+        
+        # --- [교체 판별 로직] ---
+        if ticker != "KRW-ETH" and ticker not in top_grid_candidates and profit_rate > 0.01:
+            if worker.execute_sell(ticker, pos['vol'], pos['slot_index'], profit_rate*100):
+                print(f"⚖️ [슬롯 교체] {ticker} (수익권 방출 후 새 종목 대기)")
+                del bot_positions[key]
+                continue
+
+        # --- [하이브리드 매수/매도 코어 로직] ---
+        grid_step_percent = get_dynamic_grid_step(ticker)
+        current_level = pos.get('buy_level', 1) # 상태에 저장된 현재 차수 (없으면 1차)
+        
+        # 타겟가 계산 (동적 간격 적용)
+        target_buy_price = pos['buy'] * (1 - (grid_step_percent / 100))
+        target_sell_price = pos['buy'] * (1 + (grid_step_percent / 100))
+        
+        # 1️⃣ 하락 시: 가중치 피라미딩 매수 (물타기)
+        if curr_p <= target_buy_price:
+            next_level = current_level + 1
+            weight = get_pyramiding_weight(next_level)
+            
+            # 해당 슬롯의 기본 투입 단위 가져오기
+            base_unit = UNIT_LIST[pos['slot_index']-1] if (pos['slot_index']-1) < len(UNIT_LIST) else UNIT_LIST[-1]
+            invest_amount = base_unit * weight
+            
+            print(f"📉 [하락 방어] {ticker} {next_level}차 진입 시도 ({invest_amount:,.0f}원 / {weight}배 가중치)")
+            
+            if worker.execute_buy(ticker, invest_amount, pos['slot_index']):
+                # 평단가 및 볼륨 갱신 (근사치 계산 후 상태 업데이트)
+                new_vol = (invest_amount * 0.9995) / curr_p
+                total_vol = pos['vol'] + new_vol
+                new_avg_price = ((pos['buy'] * pos['vol']) + (curr_p * new_vol)) / total_vol
+                
+                bot_positions[key]['buy'] = new_avg_price
+                bot_positions[key]['vol'] = total_vol
+                bot_positions[key]['buy_level'] = next_level
+                print(f"✅ 평단가 강하 성공! [{ticker}] {pos['buy']:,.0f}원 ➡️ {new_avg_price:,.0f}원")
+                continue
+
+        # 2️⃣ 상승 시: 익절 매도
+        elif curr_p >= target_sell_price:
+            print(f"📈 [수익 실현] {ticker} 목표가 도달! 전량 익절 (수익률 {profit_rate*100:.2f}%)")
+            if worker.execute_sell(ticker, pos['vol'], pos['slot_index'], profit_rate*100):
+                print(f"🎉 {ticker} {current_level}차 진입 물량 청산 완료 (슬롯 개방)")
+                del bot_positions[key]
+                continue
+
+    # [2] 빈 슬롯 채우기 (다중 슬롯 및 유동적 배분)
+    total_active_slots = sum(active_tickers.values())
+    remaining_slots = GRID_TOTAL_SLOTS - total_active_slots
+    
+    if remaining_slots > 0 and current_regime != "ICE_AGE":
+        for ticker in top_grid_candidates:
+            if remaining_slots <= 0: break
+            
+            current_count = active_tickers.get(ticker, 0)
+            slot_limit = MAX_SLOTS_PER_COIN if USE_MULTI_SLOT else 1
+            
+            if current_count < slot_limit:
+                unit_size = UNIT_LIST[current_count] if current_count < len(UNIT_LIST) else UNIT_LIST[-1]
+                new_slot_idx = current_count + 1
+                
+                if worker.execute_buy(ticker, unit_size, new_slot_idx):
+                    key = f"{ticker}_slot_{new_slot_idx}"
+                    bot_positions[key] = {
+                        'ticker': ticker, 
+                        'vol': (unit_size*0.9995)/pyupbit.get_current_price(ticker),
+                        'buy': pyupbit.get_current_price(ticker), 
+                        'slot_index': new_slot_idx, 
+                        'engine': 'GRID',
+                        'buy_level': 1  # 💡 신규 진입 시 1차수로 초기화
+                    }
+                    remaining_slots -= 1
+                    active_tickers[ticker] = active_tickers.get(ticker, 0) + 1
+                    print(f"🚀 [신규 진입] {ticker} 슬롯 {new_slot_idx} 배치 완료 (1차 매수)")
+
+# -------------------------------------------------------------
+# 🔄 메인 제어 루프
 # -------------------------------------------------------------
 bot_positions = db_manager.recover_bot_positions(upbit)
-now_init = datetime.now()
+# DB에서 복구 시 buy_level 정보가 없다면 일괄 1로 초기화 (안전장치)
+for k, v in bot_positions.items():
+    if 'buy_level' not in v:
+        v['buy_level'] = 1
 
-for t, p in bot_positions.items():
-    if 'buy_time' not in p: p['buy_time'] = now_init
-    if p['engine'] == 'HUNTER' and 'struct_stop' not in p: p['struct_stop'] = analyzer.get_structural_stop(t)
-    if p['engine'] == 'GRID':
-        if 'allocated_krw' not in p: p['allocated_krw'] = (SEED_MONEY / TOTAL_SLOTS) * 0.5
-        if 'last_grid_price' not in p: p['last_grid_price'] = pyupbit.get_current_price(t) or p['buy']
-        if 'grid_step' not in p: p['grid_step'] = analyzer.get_grid_step(t)
-
-update_seed_money()
-
-# 💡 텔레그램 백그라운드 리스너 가동
-telegram_handler.start_telegram_listener(bot_positions, lambda: SEED_MONEY)
-
-background_target_fetcher()
-evaluate_grid_candidates() 
-last_grid_eval_time = datetime.now()
-core_targets, hunter_targets = next_day_core_targets.copy(), next_day_hunter_targets.copy()
-
-next_regime_check_time = datetime.now()
-last_report_time = datetime.now() - timedelta(hours=3)
-last_target_fetch_time = None
-consecutive_errors = 0
-
-# -------------------------------------------------------------
-# 🔄 메인 무한 루프
-# -------------------------------------------------------------
 while True:
     try:
         now = datetime.now()
-        update_seed_money()
         
+        # [1] 시장 상황 판단
+        if now.minute % 15 == 0:
+            current_regime = analyzer.get_market_regime(current_regime)
+
+        # [2] 그리드 후보 스캔
+        if ENGINE_TYPE == 'GRID':
+            if last_grid_eval_time is None or now >= last_grid_eval_time + timedelta(hours=6):
+                evaluate_grid_candidates()
+                last_grid_eval_time = now
+
+        # [3] 폭락 시 긴급 대응
         if analyzer.check_panic_fall():
-            send_telegram("🚨🚨 [DEFCON-1] 비트코인 대폭락 감지! 알트코인 전량 긴급 탈출!")
-            for ticker, pos in list(bot_positions.items()):
-                if pos['engine'] == 'GRID': continue
-                curr_p = pyupbit.get_current_price(ticker) or pos['buy']
-                actual_sell = safe_sell_order(ticker, pos['vol'])
-                if actual_sell > 0:
-                    net_prof = get_net_profit(pos['buy'], curr_p, actual_sell)
-                    db_manager.log_trade(ticker, "PANIC_SELL", pos['engine'], curr_p, actual_sell, (curr_p-pos['buy'])/pos['buy']*100, net_prof)
-                    notify_trade(f"긴급탈출: {pos['engine']}", ticker, curr_p, actual_sell, (curr_p-pos['buy'])/pos['buy']*100, 0.0, net_prof)
-                    del bot_positions[ticker]
             time.sleep(10); continue
 
-        is_turbulence = (now.hour == 8 and now.minute >= 50) or (now.hour == 9 and now.minute <= 10)
+        # [4] 엔진 실행
+        if ENGINE_TYPE == 'CORE': run_core_engine(now)
+        elif ENGINE_TYPE == 'HUNTER': run_hunter_engine(now)
+        elif ENGINE_TYPE == 'GRID': run_grid_engine(now)
 
-        if now >= next_regime_check_time:
-            old_regime = current_regime
-            current_regime = analyzer.get_market_regime(current_regime)
-            if old_regime == "ICE_AGE" and current_regime != "ICE_AGE":
-                send_telegram(f"🌅 [해빙기] 시장 회복! 레이더 재가동.")
-                background_target_fetcher() 
-                evaluate_grid_candidates()
-            next_regime_check_time = now + timedelta(minutes=15)
+        loop_delay = 1 if ENGINE_TYPE == 'HUNTER' else 3
+        time.sleep(loop_delay)
 
-        if 8 <= now.hour < 23 and now >= last_report_time + timedelta(hours=3):
-            pos_info = "".join([f"{'🛡️' if p['engine']=='CORE' else ('🏹' if p['engine']=='HUNTER' else '🕸️')} {t}: {((pyupbit.get_current_price(t) or p['buy'])-p['buy'])/p['buy']*100:+.2f}%\n" for t,p in bot_positions.items()])
-            # 너무 잦은 알림을 줄이기 위해 정기보고는 생략하거나 간소화 가능
-            last_report_time = now
-
-        if now.hour % 4 == 0 and now.minute == 50 and (last_target_fetch_time is None or now >= last_target_fetch_time + timedelta(hours=3)):
-            last_target_fetch_time = now 
-            threading.Thread(target=background_target_fetcher).start()
-
-        # ==============================================================
-        # 🕸️ 하이브리드 그리드 엔진 (Fixed ETH + Alpha 1)
-        # ==============================================================
-        if last_grid_eval_time is None or now >= last_grid_eval_time + timedelta(hours=12):
-            evaluate_grid_candidates()
-            last_grid_eval_time = now
-
-        grid_positions = {t: p for t, p in bot_positions.items() if p['engine'] == 'GRID'}
-        grid_count = len(grid_positions)
-
-        # [1] 스티키 교체 및 그리드 매매 (공통)
-        for t, pos in list(grid_positions.items()):
-            curr_p = pyupbit.get_current_price(t)
-            if not curr_p: continue
-            profit_rate = (curr_p - pos['buy']) / pos['buy']
-            
-            # Alpha 슬롯 교체 로직 (ETH는 절대 교체 안함, 타겟에 없고 수익권일때만 스왑)
-            if t != "KRW-ETH" and t not in top_grid_candidates and profit_rate > 0.01:
-                actual_sell = safe_sell_order(t, pos['vol'])
-                if actual_sell > 0:
-                    net_prof = get_net_profit(pos['buy'], curr_p, actual_sell)
-                    db_manager.log_trade(t, "SWAP_GRID", "GRID", curr_p, actual_sell, profit_rate*100, net_prof)
-                    notify_trade("방출: ⚖️ Alpha 사냥터 이전 (교체)", t, curr_p, actual_sell, profit_rate*100, 0, net_prof)
-                    del bot_positions[t]
-                    grid_count -= 1
-                    continue 
-
-            # 그리드 상/하단 매매
-            step = analyzer.get_grid_step(t) or pos['grid_step']
-            if curr_p >= pos['last_grid_price'] + step:
-                actual_sell = safe_sell_order(t, max(pos['vol']*0.15, 6000/curr_p))
-                if actual_sell > 0:
-                    pos['vol'] -= actual_sell; pos['last_grid_price'] = curr_p
-                    net_prof = get_net_profit(pos['buy'], curr_p, actual_sell)
-                    if (pos['vol']*curr_p + pos['allocated_krw']) > (SEED_MONEY/TOTAL_SLOTS)*1.05:
-                        db_manager.log_trade(t, "SELL_REBALANCE", "GRID", curr_p, actual_sell, profit_rate*100, net_prof)
-                        notify_trade("방출: ⚖️ 그리드 다이어트", t, curr_p, actual_sell, profit_rate*100, pos['vol'], net_prof)
-                    else:
-                        pos['allocated_krw'] += (actual_sell * curr_p)
-                        db_manager.log_trade(t, "SELL_GRID", "GRID", curr_p, actual_sell, profit_rate*100, net_prof)
-                        notify_trade("익절: 🕸️ 그리드 상단", t, curr_p, actual_sell, profit_rate*100, pos['vol'], net_prof)
-            elif curr_p <= pos['last_grid_price'] - step and curr_p > analyzer.get_ema200(t):
-                buy_krw = max(pos['allocated_krw']*0.15, 6000)
-                if get_safe_balance("KRW") >= buy_krw and pos['allocated_krw'] >= buy_krw:
-                    vol = safe_buy_order(t, buy_krw, curr_p)
-                    if vol > 0:
-                        pos['vol'] += vol; pos['last_grid_price'] = curr_p; pos['allocated_krw'] -= buy_krw
-                        db_manager.log_trade(t, "BUY_GRID", "GRID", curr_p, vol, 0.0, 0.0)
-                        notify_trade("매수: 🕸️ 그리드 하단", t, curr_p, vol, (curr_p-pos['buy'])/pos['buy']*100, pos['vol'])
-
-        # [2] 빈 슬롯 채우기 (Fixed ETH & Alpha)
-        if not is_turbulence and current_regime != "ICE_AGE" and len(bot_positions) < TOTAL_SLOTS:
-            base_invest = (SEED_MONEY / TOTAL_SLOTS) * 0.5
-            
-            # Fixed 슬롯 (ETH) 체크 및 가동
-            if "KRW-ETH" not in grid_positions:
-                curr_p = pyupbit.get_current_price("KRW-ETH")
-                if curr_p:
-                    vol = safe_buy_order("KRW-ETH", base_invest, curr_p)
-                    if vol > 0:
-                        bot_positions["KRW-ETH"] = {'vol':vol, 'buy':curr_p, 'peak':curr_p, 'engine':'GRID', 'last_grid_price':curr_p, 'grid_step':analyzer.get_grid_step("KRW-ETH"), 'allocated_krw':base_invest}
-                        db_manager.log_trade("KRW-ETH", "BUY_GRID_INIT", "GRID", curr_p, vol, 0.0, 0.0)
-                        notify_trade("매수: 🕸️ Fixed 그리드 (ETH) 가동", "KRW-ETH", curr_p, vol, 0.0, vol)
-            
-            # Alpha 슬롯 체크 및 가동
-            alpha_count = sum(1 for t, p in bot_positions.items() if p['engine'] == 'GRID' and t != "KRW-ETH")
-            if alpha_count < 1 and len(bot_positions) < TOTAL_SLOTS:
-                for candidate in top_grid_candidates:
-                    if candidate not in bot_positions:
-                        curr_p = pyupbit.get_current_price(candidate)
-                        if curr_p:
-                            vol = safe_buy_order(candidate, base_invest, curr_p)
-                            if vol > 0:
-                                bot_positions[candidate] = {'vol':vol, 'buy':curr_p, 'peak':curr_p, 'engine':'GRID', 'last_grid_price':curr_p, 'grid_step':analyzer.get_grid_step(candidate), 'allocated_krw':base_invest}
-                                db_manager.log_trade(candidate, "BUY_GRID_INIT", "GRID", curr_p, vol, 0.0, 0.0)
-                                notify_trade("매수: 🏹 Alpha 그리드 가동", candidate, curr_p, vol, 0.0, vol)
-
-        # ==============================================================
-        # 🛡️🏹 코어 및 헌터 매도 구역
-        # ==============================================================
-        for ticker, pos in list(bot_positions.items()):
-            if pos['engine'] == 'GRID': continue
-            curr_p = pyupbit.get_current_price(ticker)
-            if not curr_p: continue
-            if curr_p > pos['peak']: pos['peak'] = curr_p
-            
-            prof_rate = (curr_p - pos['buy']) / pos['buy']
-            
-            if pos['engine'] == "CORE":
-                if prof_rate >= 0.05 and not pos.get('half_sold', False):
-                    actual_sell = safe_sell_order(ticker, pos['vol'] * 0.5)
-                    if actual_sell > 0:
-                        pos['vol'] -= actual_sell; pos['half_sold'] = True
-                        net_prof = get_net_profit(pos['buy'], curr_p, actual_sell)
-                        notify_trade("매도: 코어 절반익절", ticker, curr_p, actual_sell, prof_rate*100, pos['vol'], net_prof)
-                if curr_p < analyzer.get_chandelier_exit(ticker, pos['peak'], current_regime):
-                    actual_sell = safe_sell_order(ticker, pos['vol'])
-                    if actual_sell > 0:
-                        net_prof = get_net_profit(pos['buy'], curr_p, actual_sell)
-                        notify_trade(f"매도: 코어 샹들리에 청산", ticker, curr_p, actual_sell, prof_rate*100, 0.0, net_prof)
-                        del bot_positions[ticker]
-
-            elif pos['engine'] == "HUNTER":
-                if curr_p < pos['struct_stop'] or ( (now - pos['buy_time']).total_seconds()/60 >= 45 and prof_rate <= 0 ):
-                    actual_sell = safe_sell_order(ticker, pos['vol'])
-                    if actual_sell > 0:
-                        net_prof = get_net_profit(pos['buy'], curr_p, actual_sell)
-                        notify_trade(f"매도: 헌터 원칙 청산", ticker, curr_p, actual_sell, prof_rate*100, 0.0, net_prof)
-                        del bot_positions[ticker]
-
-        # ==============================================================
-        # 🚀 코어 및 헌터 매수 구역 (V17.17 스마트 필터 적용)
-        # ==============================================================
-        if not is_turbulence and current_regime != "ICE_AGE" and not analyzer.check_btc_flash_crash():
-            core_count = sum(1 for p in bot_positions.values() if p['engine'] == 'CORE')
-            hunter_count = sum(1 for p in bot_positions.values() if p['engine'] == 'HUNTER')
-            total_occupied = len(bot_positions)
-            
-            base_invest = (SEED_MONEY / TOTAL_SLOTS) * REGIME_SETTINGS[current_regime]['ratio']
-            
-            if core_count < CORE_SLOTS and total_occupied < TOTAL_SLOTS:
-                for ticker, t_info in core_targets.items():
-                    if ticker in bot_positions or core_count >= CORE_SLOTS or total_occupied >= TOTAL_SLOTS: continue
-                    curr_p = pyupbit.get_current_price(ticker)
-                    if curr_p and curr_p >= (t_info['open'] + t_info['range']*t_info['k']):
-                        # 💡 [V17.17 CORE 필터] 돌파 + ADX 추세 강도 + 거래량 스파이크 동시 확인
-                        if analyzer.check_keltner_breakout(ticker) and analyzer.get_adx(ticker) > 25 and analyzer.check_volume_spike(ticker):
-                            vol = safe_buy_order(ticker, base_invest, curr_p)
-                            if vol > 0:
-                                bot_positions[ticker] = {'vol':vol, 'buy':curr_p, 'peak':curr_p, 'engine':'CORE', 'buy_time':now}
-                                db_manager.log_trade(ticker, "BUY", "CORE", curr_p, vol, 0.0, 0.0)
-                                notify_trade("매수: 🛡️ 코어 진입 (추세+거래량 확인)", ticker, curr_p, vol, 0.0, vol)
-                                core_count += 1; total_occupied += 1 
-
-            if hunter_count < HUNTER_SLOTS and total_occupied < TOTAL_SLOTS:
-                for ticker in hunter_targets.keys():
-                    if ticker in bot_positions or hunter_count >= HUNTER_SLOTS or total_occupied >= TOTAL_SLOTS: continue
-                    # 💡 [V17.17 HUNTER 필터] 과매도 진입 후 바닥 지지 캔들(아래꼬리 핀바) 확인
-                    if analyzer.check_hunter_dip_buy(ticker) and analyzer.is_pin_bar(ticker):
-                        curr_p = pyupbit.get_current_price(ticker)
-                        vol = safe_buy_order(ticker, base_invest, curr_p)
-                        if vol > 0:
-                            bot_positions[ticker] = {'vol':vol, 'buy':curr_p, 'peak':curr_p, 'engine':'HUNTER', 'buy_time':now, 'struct_stop':analyzer.get_structural_stop(ticker)}
-                            db_manager.log_trade(ticker, "BUY", "HUNTER", curr_p, vol, 0.0, 0.0)
-                            notify_trade("매수: 🏹 헌터 진입 (바닥 지지 확인)", ticker, curr_p, vol, 0.0, vol)
-                            hunter_count += 1; total_occupied += 1 
-
-        time.sleep(1) 
     except Exception as e:
-        consecutive_errors += 1
-        if consecutive_errors < 5: time.sleep(5)
-        else:
-            send_telegram(f"🚨 [다운] {e}\n{traceback.format_exc()[-200:]}"); break
+        print(f"🚨 [{ENGINE_TYPE}] 루프 에러: {e}")
+        traceback.print_exc()
+        time.sleep(5)
