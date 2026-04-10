@@ -736,7 +736,13 @@ def run_scalp_engine(now):
             if current_count < slot_limit: 
                 # 💡 [적용] SCALP 전용 UNIT_LIST에서 차등 투자금 배정
                 unit_size = SCALP_UNIT_LIST[current_count] if current_count < len(SCALP_UNIT_LIST) else SCALP_UNIT_LIST[-1]
-                
+
+                # 💡 [추가] DB 예산뿐만 아니라, 업비트 실제 잔고도 충분한지 이중 체크
+                krw_balance = safe_balances.get('KRW', 0.0)
+                if krw_balance < unit_size:
+                    print(f"❌ [실제 잔고 부족] {ticker} 신규 진입 불가 (필요: {unit_size:,.0f}원 / 잔고: {krw_balance:,.0f}원)")
+                    break
+
                 if (already_used + unit_size) > MAX_BUDGET:
                     # 💡 알림이 아직 안 나갔을 때만 단 1회 출력하고 플래그 잠금
                     if not budget_lock_notified['SCALP']: 
