@@ -22,8 +22,8 @@ _paused_engines = set()
 VALID_ENGINES = ["CORE", "HUNTER", "GRID", "SCALP", "CLASSIC_GRID"]
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """현재 슬롯 운영 상태 및 상세 손익 보고 (/status)"""
-    # 1. 오늘 누적 실현 수익 가져오기
+    """현재 슬롯 운영 상태 및 상세 손익 보고 (/status) - 엔진별 요약판"""
+    # 1. 오늘 누적 실현 수익 가져오기 (trade_logs 테이블)
     rows = db_manager.get_today_performance(0)
     total_today_profit = sum(row['total_profit'] for row in rows) if rows else 0
     
@@ -31,34 +31,78 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg += f"💰 금일 누적 수익: {total_today_profit:+,.0f}원\n"
     msg += "──────────────────\n"
 
-    if not _bot_positions:
-        msg += "- 현재 보유 중인 종목이 없습니다."
-    else:
-        # 💡 전체 평가 손익 합계를 위한 변수
-        total_unrealized_profit = 0
+    # DB 장부에서 모든 엔진의 보유 코인 조회
+    import pymysql
+    from config import DB_CONF
+    
+    active_positions = []
+    try:
+        conn = pymysql.connect(**DB_CONF, charset='utf8mb4', cursorclass=pymysql.cursors.DictCursor)
+        with conn.cursor() as cur:
+            sql = "SELECT * FROM current_positions WHERE account_id = %s AND volume > 0"
+            cur.execute(sql, (db_manager.ACCOUNT_ID,))
+            active_positions = cur.fetchall()
+        conn.close()
+    except Exception as e:
+        msg += f"❌ DB 장부 조회 오류: {e}"
+        await update.message.reply_text(msg)
+        return
 
-        for key, p in list(_bot_positions.items()):
-            ic = "🏹" if p['engine'] == 'HUNTER' else "🕸️" if p['engine'] == 'CLASSIC_GRID' else "🛡️" if p['engine'] == 'CORE' else "⚡" if p['engine'] == 'SCALP' else "🎰" if p['engine'] == 'GRID' else "🤖"
-            #ic = "🛡️" if p['engine']=='CORE' else ("🏹" if p['engine']=='HUNTER' else "🕸️")
+    if not active_positions:
+        msg += "- 현재 운용 중인(매수한) 엔진이 없습니다."
+    else:
+        # 💡 [속도 최적화] 보유 중인 모든 코인의 현재가를 한 번에 조회
+        tickers = list(set([p['ticker'] for p in active_positions]))
+        current_prices = pyupbit.get_current_price(tickers) if tickers else {}
+        if not isinstance(current_prices, dict): 
+            # 종목이 1개일 때 float으로 반환되는 업비트 API 예외 처리
+            current_prices = {tickers[0]: current_prices} if isinstance(current_prices, (int, float)) else {}
+
+        # 엔진별 통계를 모을 딕셔너리
+        engine_stats = {}
+        total_unrealized_profit = 0
+        total_invested_all = 0
+
+        # 데이터 그룹화 (엔진별로 합산)
+        for p in active_positions:
+            engine = p['engine_name']
+            ticker = p['ticker']
+            buy_price = float(p['buy_price'])
+            vol = float(p['volume'])
             
-            # 💡 p['ticker']를 사용하여 정확한 현재가 조회 (버그 수정)
-            curr_p = pyupbit.get_current_price(p['ticker']) or p['buy']
+            invested = float(p.get('invested_amount', buy_price * vol))
+            curr_p = current_prices.get(ticker) or buy_price
             
-            # 수익률 및 평가 손익(원화) 계산
-            rate = ((curr_p - p['buy']) / p['buy']) * 100
-            profit_amt = (curr_p - p['buy']) * p['vol'] # 현재가 - 평단가 * 보유수량
+            profit_amt = (curr_p - buy_price) * vol 
+            
+            if engine not in engine_stats:
+                engine_stats[engine] = {'count': 0, 'invested': 0.0, 'profit': 0.0}
+            
+            engine_stats[engine]['count'] += 1
+            engine_stats[engine]['invested'] += invested
+            engine_stats[engine]['profit'] += profit_amt
+            
             total_unrealized_profit += profit_amt
+            total_invested_all += invested
+
+        # 그룹화된 통계를 메시지로 출력
+        for engine, stats in engine_stats.items():
+            ic = "🏹" if engine == 'HUNTER' else "🕸️" if engine == 'CLASSIC_GRID' else "🛡️" if engine == 'CORE' else "⚡" if engine == 'SCALP' else "🎰" if engine == 'GRID' else "🤖"
             
-            # 투자 원금 (DB에서 가져온 값 사용)
-            invested = p.get('invested_amount', p['buy'] * p['vol'])
+            e_invested = stats['invested']
+            e_profit = stats['profit']
+            e_count = stats['count']
+            e_rate = (e_profit / e_invested) * 100 if e_invested > 0 else 0
             
-            msg += f"{ic} {p['ticker']} ({p['buy_level']}차)\n"
-            msg += f"  - 수익률: {rate:+.2f}% ({profit_amt:+,.0f}원)\n"
-            msg += f"  - 투자금: {invested:,.0f}원 (슬롯 {p['slot_index']})\n"
-            msg += "\n"
+            msg += f"{ic} [{engine}] (운용중: {e_count}종목)\n"
+            msg += f"  - 투자금: {e_invested:,.0f}원\n"
+            msg += f"  - 평가손익: {e_profit:+,.0f}원 ({e_rate:+.2f}%)\n\n"
         
+        # 전체 합계 출력
         msg += "──────────────────\n"
-        msg += f"📈 총 평가 손익: {total_unrealized_profit:+,.0f}원"
+        total_rate = (total_unrealized_profit / total_invested_all) * 100 if total_invested_all > 0 else 0
+        msg += f"💵 총 투자금: {total_invested_all:,.0f}원\n"
+        msg += f"📈 총 평가 손익: {total_unrealized_profit:+,.0f}원 ({total_rate:+.2f}%)"
             
     await update.message.reply_text(msg)
 
@@ -183,7 +227,7 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg)
     else:
         await update.message.reply_text(f"⚠️ [{target_engine}] 엔진 장부에 청산할 코인이 없습니다.")
-        
+
 
 async def pause_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """특정 엔진의 자동 매매 루프를 일시 정지 (/pause 엔진명)"""
