@@ -889,8 +889,7 @@ def run_classic_grid_engine(now):
                         # 일반 익절: 수익금을 하단 물타기 예비비에 재투자 (복리)
                         pos['allocated_krw'] += (actual_sell_vol * curr_p_after)
                         trade_type = "SELL_GRID_PART"
-                        icon = "📈" if realized_krw > 0 else "📉"
-                        noti_msg = f"{icon} [🕸️ {ENGINE_NAME} 부분 매도]"
+                        noti_msg = f"[🕸️ {ENGINE_NAME} 부분 매도]"
                         print(f"🕸️ [그리드 상단] {ticker} 부분 매도 완료 (+{realized_krw:,.0f}원)")
                     
                     # 💡 [NOW 연동] 부분 매도 로그 및 DB 장부(수량/투자금) 차감 업데이트
