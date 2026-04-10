@@ -850,6 +850,20 @@ def run_classic_grid_engine(now):
             actual_sell_vol = min(target_sell_vol, safe_balances.get(ticker.split('-')[1], 0.0))
             
             if actual_sell_vol > 0:
+                # 💡 [핵심 추가] 먼지(Dust) 방지 로직: 매도 후 남은 가치 평가
+                remaining_vol = pos['vol'] - actual_sell_vol
+                remaining_krw = remaining_vol * curr_p
+
+                # 남은 금액이 6,000원 미만이라면 전량 매도로 스위칭
+                if remaining_vol > 0 and remaining_krw < 6000:
+                    print(f"🧹 [잔돈 청소] {ticker} 남은 잔고({remaining_krw:,.0f}원)가 최소 주문 금액 미달. 전량 익절로 전환합니다!")
+                    realized_krw = (curr_p - pos['buy']) * pos['vol']
+                    
+                    # worker를 이용해 100% 매도 처리 및 DB/슬롯 완전히 비우기
+                    if worker.execute_sell(ticker, pos['vol'], pos['slot_index'], profit_rate*100, realized_krw):
+                        del bot_positions[key]
+                    continue # 전량 매도했으므로 아래 부분 매도 로직은 건너뜀
+
                 # 💡 [DB 보호] 부분 매도이므로 worker를 쓰지 않고 직접 안전하게 처리 (worker는 슬롯을 통째로 날려버림)
                 res = upbit.sell_market_order(ticker, actual_sell_vol)
                 if res:

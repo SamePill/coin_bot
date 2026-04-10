@@ -67,6 +67,24 @@ def execute_sell(ticker, volume, slot_index=1, profit_rate=0.0, realized_profit=
     - slot_index: 매도하려는 물량이 속한 슬롯 번호
     """
     try:
+
+        coin = ticker.split('-')[1]
+        actual_total_vol = upbit.get_balance(coin)
+        curr_p = pyupbit.get_current_price(ticker)
+        
+        if actual_total_vol > 0 and curr_p:
+            remaining_vol = actual_total_vol - volume
+            remaining_krw = remaining_vol * curr_p
+            
+            # 방어 1: DB 장부의 수량이 실제 지갑 수량보다 많을 경우 (수수료 오차 에러 방지)
+            if volume > actual_total_vol:
+                volume = actual_total_vol
+                
+            # 방어 2: 매도 후 남는 쪼가리 금액이 6,000원 미만일 경우 전량 매도로 스위칭
+            elif remaining_vol > 0 and remaining_krw < 6000:
+                print(f"🧹 [{ENGINE_TYPE} 잔돈 청소] {ticker} 남은 금액({remaining_krw:,.0f}원) 최소 주문 미달. 100% 전량 매도합니다!")
+                volume = actual_total_vol
+
         # 1. 업비트 실제 시장가 매도 주문
         res = upbit.sell_market_order(ticker, volume)
         if res and 'uuid' in res:
