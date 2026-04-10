@@ -133,13 +133,28 @@ def recover_bot_positions(upbit):
 # -------------------------------------------------------------
 # 📈 보고서 생성
 # -------------------------------------------------------------
-def get_today_performance():
-    """💡 오늘 하루 동안의 '현재 계정' 엔진별 실현 손익 통계를 계산합니다."""
+from datetime import datetime, timedelta  # 💡 파일 상단에 timedelta가 임포트되어 있는지 확인해 주세요!
+
+# -------------------------------------------------------------
+# 📈 일일 보고서 생성 (과거 날짜 조회 지원)
+# -------------------------------------------------------------
+def get_today_performance(days_ago=0):
+    """
+    💡 특정 일자(오늘, 어제 등) 하루 동안의 '현재 계정' 엔진별 실현 손익 통계를 계산합니다.
+    - 파라미터(days_ago): 0 = 오늘, 1 = 어제, 2 = 그제
+    """
     try:
         conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
         with conn.cursor(pymysql.cursors.DictCursor) as cur:
-            today_start = datetime.now().strftime('%Y-%m-%d 00:00:00')
-            # 💡 [수정] account_id 필터를 걸어 내 계정의 수익만 집계
+            
+            # 1. 입력받은 days_ago 만큼 과거의 날짜 계산
+            target_date = datetime.now() - timedelta(days=days_ago)
+            
+            # 2. 해당 날짜의 00시 00분 00초 ~ 23시 59분 59초 구간 텍스트 생성
+            start_time = target_date.strftime('%Y-%m-%d 00:00:00')
+            end_time = target_date.strftime('%Y-%m-%d 23:59:59')
+
+            # 💡 3. [수정] trade_time이 시작 시간과 종료 시간 사이에 있도록 BETWEEN 조건 적용
             sql = """
                 SELECT 
                     engine_name as engine,
@@ -147,11 +162,16 @@ def get_today_performance():
                     AVG(profit_rate) as avg_rate,
                     COUNT(*) as trade_count
                 FROM trade_logs 
-                WHERE account_id = %s AND trade_time >= %s AND side = 'SELL' 
+                WHERE account_id = %s 
+                  AND trade_time BETWEEN %s AND %s 
+                  AND side = 'SELL' 
                 GROUP BY engine_name
             """
-            cur.execute(sql, (ACCOUNT_ID, today_start))
+            
+            # 쿼리에 계정 ID와 시작/종료 시간을 파라미터로 전달
+            cur.execute(sql, (ACCOUNT_ID, start_time, end_time))
             return cur.fetchall()
+            
     except Exception as e:
         print(f"❌ 보고서 생성 오류: {e}")
         return []

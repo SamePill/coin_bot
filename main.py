@@ -809,7 +809,7 @@ def run_classic_grid_engine(now):
                     db_manager.update_position(ENGINE_NAME, ticker, 0, 0, 'SELL', pos['slot_index'])
                     db_manager.log_trade(ticker, "SWAP_GRID", curr_p, sell_vol, profit_rate*100, realized_krw)
                     print(f"⚖️ [방출] {ticker} 타겟 제외로 인한 교체 방출 ({profit_rate*100:+.2f}%)")
-                    send_telegram(f"⚖️ [{ENGINE_NAME}] {ticker} 사냥터 이전 전량 매도\n- 실현수익: {realized_krw:+,.0f}원")
+                    send_telegram(f"⚖️ [🕸️ {ENGINE_NAME}] {ticker} 사냥터 이전 전량 매도\n- 실현수익: {realized_krw:+,.0f}원")
                     del bot_positions[key]
             continue
 
@@ -840,6 +840,19 @@ def run_classic_grid_engine(now):
                     db_manager.log_trade(ticker, "SELL_GRID_PART", curr_p_after, actual_sell_vol, profit_rate*100, realized_krw)
                     print(f"🕸️ [그리드 상단] {ticker} 부분 익절 완료 (+{realized_krw:,.0f}원)")
                     
+                    # 💡 [알림 복원] worker.py와 동일한 포맷으로 부분 익절 알림 발송
+                    if ENABLE_TRADE_NOTI:
+                        icon = "📈" if realized_krw > 0 else "📉"
+                        send_telegram(
+                            f"{icon} [🕸️ {ENGINE_NAME} 부분 익절]\n"
+                            f"- 종목: {ticker}\n"
+                            f"- 실현 손익: {realized_krw:+,.0f}원\n"
+                            f"- 수익률: {profit_rate*100:+.2f}%\n"
+                            f"- 단가: {curr_p_after:,.2f}원\n"
+                            f"- 슬롯: {pos['slot_index']}번"
+                        )
+
+
                     # 💡 NOW DB 구조에서 부분 매도를 반영하기 위한 Custom 업데이트
                     import pymysql
                     from config import DB_CONF
@@ -884,6 +897,16 @@ def run_classic_grid_engine(now):
                     db_manager.update_position(ENGINE_NAME, ticker, curr_p_after, bought_vol, 'BUY', pos['slot_index'])
                     
                     print(f"🕸️ [그리드 하단] {ticker} 부분 매수(물타기) 완료. (새 평단: {new_avg:,.0f}원)")
+                    
+                    # 💡 [추가] 매수 완료 알림 발송
+                    if ENABLE_TRADE_NOTI:
+                        send_telegram(
+                            f"✅ [🕸️ {ENGINE_NAME} 부분 매수(물타기) 완료]\n"
+                            f"- 종목: {ticker}\n"
+                            f"- 단가: {curr_p:,.2f}원\n"
+                            f"- 금액: {amount:,.0f}원\n"
+                            f"- 슬롯: {slot_index}번"
+                        )
 
     # =====================================================================
     # [2] 빈 슬롯 채우기 (다중 슬롯 적용 신규 진입)
@@ -948,6 +971,14 @@ def run_classic_grid_engine(now):
                     already_used += unit_size
                     
                     print(f"🚀 [{ENGINE_NAME} 신규 진입] {ticker} 슬롯 {new_slot_idx} 거미줄 전개 완료!")
+                    if ENABLE_TRADE_NOTI:
+                        send_telegram(
+                            f"✅ [🕸️{ENGINE_NAME} 매수 완료]\n"
+                            f"- 종목: {ticker}\n"
+                            f"- 단가: {curr_p:,.2f}원\n"
+                            f"- 금액: {amount:,.0f}원\n"
+                            f"- 슬롯: {slot_index}번"
+                        )
 
 # -------------------------------------------------------------
 # 🔄 메인 제어 루프
@@ -987,8 +1018,8 @@ while True:
         now = datetime.now()
         
         # 💡 매일 아침 8시 0분에 한 번만 자동 보고서 발송
-        if now.hour == 8 and now.minute == 0 and last_daily_report_day != now.day:
-            rows = db_manager.get_today_performance()
+        if ENGINE_TYPE == 'GRID' and now.hour == 8 and now.minute == 0 and last_daily_report_day != now.day:
+            rows = db_manager.get_today_performance(1)
             report_msg = f"🌅 [아침 브리핑] 어제 총 결산\n\n"
             if not rows:
                 report_msg += "어제는 완료된 매매가 없었습니다."
@@ -1002,10 +1033,10 @@ while True:
             send_telegram(report_msg)
             last_daily_report_day = now.day # 발송 완료 기록
 
-        # 💡 [수정] 정기 보고서 발송 (8, 13, 18, 23시)
-        report_hours = [8, 13, 18, 23]
-        if now.hour in report_hours and now.minute == 0 and last_daily_report_hour != now.hour:
-            rows = db_manager.get_today_performance()
+        # 💡 [수정] 정기 보고서 발송 (8, 13, 18, 23시) - GRID에서만 보내기 (중복발송))
+        report_hours = [13, 18, 23]
+        if ENGINE_TYPE == 'GRID' and now.hour in report_hours and now.minute == 0 and last_daily_report_hour != now.hour:
+            rows = db_manager.get_today_performance(0)
             # db_manager.ACCOUNT_ID를 사용하여 어떤 계정의 보고서인지 명시합니다.
             report_msg = f"📊 [{db_manager.ACCOUNT_ID}] 정기 수익 보고 ({now.hour}시)\n\n"
             

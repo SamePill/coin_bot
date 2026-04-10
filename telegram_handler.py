@@ -14,7 +14,7 @@ _get_seed_money = None
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """현재 슬롯 운영 상태 및 상세 손익 보고 (/status)"""
     # 1. 오늘 누적 실현 수익 가져오기
-    rows = db_manager.get_today_performance()
+    rows = db_manager.get_today_performance(0)
     total_today_profit = sum(row['total_profit'] for row in rows) if rows else 0
     
     msg = f"📊 [{db_manager.ACCOUNT_ID} 실시간 운용 현황]\n"
@@ -28,7 +28,8 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_unrealized_profit = 0
 
         for key, p in list(_bot_positions.items()):
-            ic = "🛡️" if p['engine']=='CORE' else ("🏹" if p['engine']=='HUNTER' else "🕸️")
+            ic = "🏹" if row['engine'] == 'HUNTER' else "🕸️" if row['engine'] == 'CLASSIC_GRID' else "🛡️" if row['engine'] == 'CORE' else "⚡" if row['engine'] == 'SCALP' else "🎰" if row['engine'] == 'GRID' else "🤖"
+            #ic = "🛡️" if p['engine']=='CORE' else ("🏹" if p['engine']=='HUNTER' else "🕸️")
             
             # 💡 p['ticker']를 사용하여 정확한 현재가 조회 (버그 수정)
             curr_p = pyupbit.get_current_price(p['ticker']) or p['buy']
@@ -52,18 +53,19 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg)
 
 async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """오늘의 수익 현황 보고 (/report)"""
-    rows = db_manager.get_today_performance()
+    """어제의 수익 현황 보고 (/report)"""
+    rows = db_manager.get_today_performance(1)
     seed_money = _get_seed_money() if _get_seed_money else 0
     
-    msg = "💰 [오늘의 매매 결산 보고서]\n\n"
+    msg = "💰 [어제의 매매 결산 보고서]\n\n"
     total_krw = 0
     
     if not rows:
-        msg += "- 오늘 완료된 매매 내역이 없습니다."
+        msg += "- 어제 완료된 매매 내역이 없습니다."
     else:
         for row in rows:
-            ic = "🛡️" if row['engine']=='CORE' else ("🏹" if row['engine']=='HUNTER' else "🕸️")
+            ic = "🏹" if row['engine'] == 'HUNTER' else "🕸️" if row['engine'] == 'CLASSIC_GRID' else "🛡️" if row['engine'] == 'CORE' else "⚡" if row['engine'] == 'SCALP' else "🎰" if row['engine'] == 'GRID' else "🤖"
+            #ic = "🛡️" if row['engine']=='CORE' else ("🏹" if row['engine']=='HUNTER' else "🕸️")
             msg += f"{ic} {row['engine']}: {row['total_profit']:+,.0f}원 ({row['avg_rate']:+.2f}%)\n"
             total_krw += row['total_profit']
         

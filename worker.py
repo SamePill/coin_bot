@@ -47,8 +47,9 @@ def execute_buy(ticker, amount, slot_index=1):
                 print(f"✅ [{ENGINE_TYPE}] {ticker} 슬롯 {slot_index} 매수 성공: {amount:,.0f}원")
                 # 💡 [추가] 매수 완료 알림 발송
                 if ENABLE_TRADE_NOTI:
+                    symbol = "🏹" if ENGINE_TYPE == 'HUNTER' else "🕸️" if ENGINE_TYPE == 'CLASSIC_GRID' else "🛡️" if ENGINE_TYPE == 'CORE' else "⚡" if ENGINE_TYPE == 'SCALP' else "🎰" if ENGINE_TYPE == 'GRID' else "🤖"
                     send_telegram(
-                        f"✅ [{ENGINE_TYPE} 매수 완료]\n"
+                        f"✅ [{symbol}{ENGINE_TYPE} 매수 완료]\n"
                         f"- 종목: {ticker}\n"
                         f"- 단가: {curr_p:,.2f}원\n"
                         f"- 금액: {amount:,.0f}원\n"
@@ -83,8 +84,10 @@ def execute_sell(ticker, volume, slot_index=1, profit_rate=0.0, realized_profit=
             # 💡 [추가] 매도 완료 알림 발송 (수익금 및 수익률 포함)
             if ENABLE_TRADE_NOTI:
                 icon = "📈" if realized_profit > 0 else "📉"
+                # p['engine'] 또는 ENGINE_TYPE 변수를 사용한다고 가정
+                symbol = "🏹" if ENGINE_TYPE == 'HUNTER' else "🕸️" if ENGINE_TYPE == 'CLASSIC_GRID' else "🛡️" if ENGINE_TYPE == 'CORE' else "⚡" if ENGINE_TYPE == 'SCALP' else "🎰" if ENGINE_TYPE == 'GRID' else "🤖"
                 send_telegram(
-                    f"{icon} [{ENGINE_TYPE} 매도 완료]\n"
+                    f"{icon} [{symbol}{ENGINE_TYPE} 매도 완료]\n"
                     f"- 종목: {ticker}\n"
                     f"- 실현 손익: {realized_profit:+,.0f}원\n"
                     f"- 수익률: {profit_rate:+.2f}%\n"
