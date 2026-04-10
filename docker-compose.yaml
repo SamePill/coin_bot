@@ -101,7 +101,7 @@ services:
     environment:
       - ACCOUNT_ID=${ACCOUNT_ID}
       - ENGINE_TYPE=CLASSIC_GRID
-      - MAX_BUDGET=${SCALP_MAX_BUDGET}
+      - MAX_BUDGET=${GC_MAX_BUDGET}
       - ENABLE_TELEGRAM_COMMANDS=False
       - TZ=Asia/Seoul
 
