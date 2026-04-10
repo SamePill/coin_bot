@@ -1283,6 +1283,8 @@ last_daily_report_day = None
 consecutive_errors = 0
 
 last_daily_report_hour = -1  # 💡 추가: 마지막으로 보고서를 보낸 시간 기록
+# 💡 [추가] 무한 루프 시작 '바로 위'에 카운터 변수를 하나 만들어 줍니다.
+pause_log_counter = 0
 
 while True:
     try:
@@ -1343,12 +1345,21 @@ while True:
         if analyzer.check_panic_fall():
             time.sleep(10); continue
 
-        # 💡 [핵심 수정] DB를 조회하여 자신의 엔진이 정지 상태인지 확인
+        # 💡 [수정] DB를 조회하여 엔진 일시 정지 상태 확인
         if db_manager.is_engine_paused(ENGINE_TYPE):
-            if now.second % 60 == 0:  
+            
+            # 카운터가 0이거나 60의 배수일 때만(즉 1분마다) 출력
+            if pause_log_counter % 60 == 0:  
                 print(f"⏸️ [{ENGINE_TYPE}] 엔진 루프 일시 정지 중... (텔레그램 /resume 대기)")
-            time.sleep(300)
+            
+            pause_log_counter += 1
+            
+            # 🚨 핵심: 여기는 반드시 1초로 두어야 텔레그램 명령에 즉각 반응합니다!
+            time.sleep(10) 
             continue # 아래 엔진 로직을 스킵하고 무한 대기
+        
+        # 정지가 풀려서 일반 매매로 넘어가면 카운터 초기화
+        pause_log_counter = 0
 
         if ENGINE_TYPE == 'CORE': run_core_engine(now)
         elif ENGINE_TYPE == 'HUNTER': run_hunter_engine(now)
