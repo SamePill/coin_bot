@@ -67,18 +67,43 @@ next_day_core_targets, next_day_hunter_targets = {}, {}
 last_target_fetch_time = None
 budget_lock_notified = {'SCALP': False, 'GRID': False, 'CLASSIC_GRID': False}
 
+symbol = "🏹" if ENGINE_TYPE == 'HUNTER' else "🕸️" if ENGINE_TYPE == 'CLASSIC_GRID' else "🛡️" if ENGINE_TYPE == 'CORE' else "⚡" if ENGINE_TYPE == 'SCALP' else "🎰" if ENGINE_TYPE == 'GRID' else "🤖"
 print(f"====================================================")
 print(f"🏆 [시스템] Aegis-Elite V17.17 무결성 패치 가동 (모드: {ENGINE_TYPE})")
 if ENGINE_TYPE == 'GRID':
     print(f"🎰 그리드 슬롯: {GRID_TOTAL_SLOTS} | 다중슬롯: {USE_MULTI_SLOT} (Max {MAX_SLOTS_PER_COIN})")
+    send_telegram(
+        f"[{symbol}{ENGINE_TYPE} 시동 완료 !!!]\n"
+        f"- 그리드 슬롯: {GRID_TOTAL_SLOTS} \n"
+        f"- 다중슬롯: {USE_MULTI_SLOT} (Max {MAX_SLOTS_PER_COIN}\n"
+        f"- 💰 할당 예산: {MAX_BUDGET:,.0f}원"
+    )
 elif ENGINE_TYPE == 'SCALP':
     print(f"🎰 Scalp 슬롯: {SCALP_TOTAL_SLOTS} | 다중슬롯: {SCALP_USE_MULTI_SLOT} (Max {SCALP_MAX_SLOTS_PER_COIN})")
+    send_telegram(
+        f"[{symbol}{ENGINE_TYPE} 시동 완료 !!!]\n"
+        f"- 그리드 슬롯: {SCALP_TOTAL_SLOTS} \n"
+        f"- 다중슬롯: {SCALP_USE_MULTI_SLOT} (Max {SCALP_MAX_SLOTS_PER_COIN}\n"
+        f"- 💰 할당 예산: {MAX_BUDGET:,.0f}원"
+    )
 elif ENGINE_TYPE == 'CLASSIC_GRID':
-        print(f"🎰 Scalp 슬롯: {CG_TOTAL_SLOTS} | 다중슬롯: {CG_USE_MULTI_SLOT} (Max {CG_MAX_SLOTS_PER_COIN})")    
+    print(f"🎰 Scalp 슬롯: {CG_TOTAL_SLOTS} | 다중슬롯: {CG_USE_MULTI_SLOT} (Max {CG_MAX_SLOTS_PER_COIN})")    
+    send_telegram(
+        f"[{symbol}{ENGINE_TYPE} 시동 완료 !!!]\n"
+        f"- 그리드 슬롯: {CG_TOTAL_SLOTS} \n"
+        f"- 다중슬롯: {CG_USE_MULTI_SLOT} (Max {CG_MAX_SLOTS_PER_COIN}\n"
+        f"- 💰 할당 예산: {MAX_BUDGET:,.0f}원"
+    )
 else:
     print(f"🎰 타겟 슬롯: {TARGET_SLOTS}")
+    send_telegram(
+        f"[{symbol}{ENGINE_TYPE} 시동 완료 !!!]\n"
+        f"- 💰 할당 예산: {MAX_BUDGET:,.0f}원"
+    )
 print(f"💰 할당 예산: {MAX_BUDGET:,.0f}원")
 print(f"====================================================\n")
+
+
 
 # -------------------------------------------------------------
 # 🧠 하이브리드 엔진 코어 함수
@@ -189,6 +214,7 @@ def evaluate_grid_candidates():
             send_telegram(msg)
     except Exception as e:
         print(f"❌ 후보 스캔 오류: {e}")
+
 
 # -------------------------------------------------------------
 # 🛡️ 엔진 1: 코어 (CORE) - 돌파/추세 추종 매매
