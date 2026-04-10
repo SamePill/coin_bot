@@ -870,13 +870,13 @@ def run_classic_grid_engine(now):
                     pos['allocated_krw'] += (actual_sell_vol * curr_p_after)
                     
                     db_manager.log_trade(ticker, "SELL_GRID_PART", curr_p_after, actual_sell_vol, profit_rate*100, realized_krw)
-                    print(f"🕸️ [그리드 상단] {ticker} 부분 익절 완료 (+{realized_krw:,.0f}원)")
+                    print(f"🕸️ [그리드 상단] {ticker} 부분 매도 완료 (+{realized_krw:,.0f}원)")
                     
                     # 💡 [알림 복원] worker.py와 동일한 포맷으로 부분 익절 알림 발송
                     if ENABLE_TRADE_NOTI:
                         icon = "📈" if realized_krw > 0 else "📉"
                         send_telegram(
-                            f"{icon} [🕸️ {ENGINE_NAME} 부분 익절]\n"
+                            f"{icon} [🕸️ {ENGINE_NAME} 부분 매도]\n"
                             f"- 종목: {ticker}\n"
                             f"- 실현 손익: {realized_krw:+,.0f}원\n"
                             f"- 수익률: {profit_rate*100:+.2f}%\n"
