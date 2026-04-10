@@ -24,7 +24,7 @@ SCALP_TOTAL_SLOTS = int(os.getenv('SCALP_TOTAL_SLOTS', 2))
 SCALP_USE_MULTI_SLOT = os.getenv('SCALP_USE_MULTI_SLOT', 'True').lower() == 'true'
 SCALP_MAX_SLOTS_PER_COIN = int(os.getenv('SCALP_MAX_SLOTS_PER_COIN', 2))
 
-CG_TOTAL_SLOTS = int(os.getenv('GC_TOTAL_SLOTS', 2))
+CG_TOTAL_SLOTS = int(os.getenv('CG_TOTAL_SLOTS', 2))
 CG_USE_MULTI_SLOT = os.getenv('SCALP_USE_MULTI_SLOT', 'True').lower() == 'true'
 CG_MAX_SLOTS_PER_COIN = int(os.getenv('SCALP_MAX_SLOTS_PER_COIN', 2))
 
@@ -791,7 +791,7 @@ def run_classic_grid_engine(now):
     global bot_positions, top_grid_candidates, current_regime, budget_lock_notified
     
     # 설정된 슬롯 개수 로드 (1종목 = 1슬롯으로 활용됨)
-    # CG_TOTAL_SLOTS = int(os.getenv('GC_TOTAL_SLOTS', 5))
+    # CG_TOTAL_SLOTS = int(os.getenv('CG_TOTAL_SLOTS', 5))
     ENGINE_NAME = 'CLASSIC_GRID'
     
     # 💡 [ASIS 복원] 전체 시드(MAX_BUDGET)를 설정된 슬롯 수로 나누어 1코인당 기본 예산 산정
