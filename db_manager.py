@@ -203,3 +203,45 @@ def update_position_state(key, real_avg_price, real_vol, next_level):
         print(f"❌ DB 상태 업데이트 실패 ({ticker}): {e}")
     finally:
         if conn: conn.close()
+
+# -------------------------------------------------------------
+# ⏸️ 엔진 상태 제어 (도커 컨테이너 간 상태 공유용)
+# -------------------------------------------------------------
+def set_engine_pause_state(engine_name, is_paused):
+    """특정 엔진의 일시 정지 상태를 DB에 기록합니다."""
+    try:
+        conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
+        with conn.cursor() as cur:
+            # 테이블이 없으면 자동 생성
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS engine_status (
+                    engine_name VARCHAR(50) PRIMARY KEY,
+                    is_paused BOOLEAN DEFAULT FALSE
+                )
+            """)
+            # 상태 업데이트 (없으면 삽입, 있으면 수정)
+            sql = """
+                INSERT INTO engine_status (engine_name, is_paused) 
+                VALUES (%s, %s) 
+                ON DUPLICATE KEY UPDATE is_paused = %s
+            """
+            cur.execute(sql, (engine_name, is_paused, is_paused))
+        conn.commit()
+    except Exception as e:
+        print(f"❌ 상태 기록 오류: {e}")
+    finally:
+        if 'conn' in locals() and conn: conn.close()
+
+def is_engine_paused(engine_name):
+    """현재 엔진이 일시 정지 상태인지 DB에서 확인합니다."""
+    try:
+        conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
+        with conn.cursor(pymysql.cursors.DictCursor) as cur:
+            # 에러 방지를 위해 테이블 존재 여부를 무시하고 셀렉트 시도
+            cur.execute("SELECT is_paused FROM engine_status WHERE engine_name = %s", (engine_name,))
+            row = cur.fetchone()
+            return bool(row['is_paused']) if row else False
+    except:
+        return False # 테이블이 없거나 에러가 나면 기본값(가동) 반환
+    finally:
+        if 'conn' in locals() and conn: conn.close()

@@ -18,6 +18,9 @@ _get_seed_money = None
 # 💡 [추가] 일시 정지된 엔진 목록을 저장하는 변수
 _paused_engines = set()
 
+# 💡 유효한 엔진 목록 (글로벌 변수처럼 활용)
+VALID_ENGINES = ["CORE", "HUNTER", "GRID", "SCALP", "CLASSIC_GRID"]
+
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """현재 슬롯 운영 상태 및 상세 손익 보고 (/status)"""
     # 1. 오늘 누적 실현 수익 가져오기
@@ -89,7 +92,16 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ 엔진 이름을 입력해주세요.\n👉 사용법: /reset SCALP 또는 /reset CLASSIC_GRID")
         return
 
+
     target_engine = context.args[0].upper()
+    # 💡 [핵심 추가] 입력된 엔진이 유효한지 검사
+    if target_engine not in VALID_ENGINES:
+        await update.message.reply_text(
+            f"❌ '{target_engine}' 은(는) 존재하지 않는 엔진입니다.\n"
+            f"👉 사용 가능한 엔진: {', '.join(VALID_ENGINES)}"
+        )
+        return
+
     upbit = pyupbit.Upbit(UPBIT_ACCESS, UPBIT_SECRET)
     
     reset_count = 0
@@ -141,6 +153,8 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(f"⚠️ [{target_engine}] 엔진에서 운용 중인(매도할) 코인이 없습니다.")
 
+
+
 async def pause_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """특정 엔진의 자동 매매 루프를 일시 정지 (/pause 엔진명)"""
     if not context.args:
@@ -148,7 +162,17 @@ async def pause_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     target_engine = context.args[0].upper()
-    _paused_engines.add(target_engine)
+    
+    # 💡 [핵심 추가] 입력된 엔진이 유효한지 검사
+    if target_engine not in VALID_ENGINES:
+        await update.message.reply_text(
+            f"❌ '{target_engine}' 은(는) 존재하지 않는 엔진입니다.\n"
+            f"👉 사용 가능한 엔진: {', '.join(VALID_ENGINES)}"
+        )
+        return
+    
+    # DB에 정지 상태 기록 (모든 컨테이너 공유)
+    db_manager.set_engine_pause_state(target_engine, True)
     
     await update.message.reply_text(
         f"⏸️ [{target_engine}] 엔진 루프가 일시 정지되었습니다.\n"
@@ -162,7 +186,17 @@ async def resume_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     target_engine = context.args[0].upper()
-    _paused_engines.discard(target_engine) # 목록에서 제거
+    
+    # 💡 [핵심 추가] 입력된 엔진이 유효한지 검사
+    if target_engine not in VALID_ENGINES:
+        await update.message.reply_text(
+            f"❌ '{target_engine}' 은(는) 존재하지 않는 엔진입니다.\n"
+            f"👉 사용 가능한 엔진: {', '.join(VALID_ENGINES)}"
+        )
+        return
+    
+    # DB에서 정지 상태 해제
+    db_manager.set_engine_pause_state(target_engine, False)
     
     await update.message.reply_text(f"▶️ [{target_engine}] 엔진 루프가 다시 가동을 시작합니다!")
 
