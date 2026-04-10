@@ -936,8 +936,7 @@ def run_classic_grid_engine(now):
                             f"✅ [🕸️ {ENGINE_NAME} 부분 매수(물타기) 완료]\n"
                             f"- 종목: {ticker}\n"
                             f"- 단가: {curr_p:,.2f}원\n"
-                            f"- 금액: {amount:,.0f}원\n"
-                            f"- 슬롯: {slot_index}번"
+                            f"- 금액: {bought_vol:,.0f}원"
                         )
 
     # =====================================================================
@@ -1008,8 +1007,8 @@ def run_classic_grid_engine(now):
                             f"✅ [🕸️{ENGINE_NAME} 매수 완료]\n"
                             f"- 종목: {ticker}\n"
                             f"- 단가: {curr_p:,.2f}원\n"
-                            f"- 금액: {amount:,.0f}원\n"
-                            f"- 슬롯: {slot_index}번"
+                            f"- 금액: {exec_vol:,.0f}원\n"
+                            f"- 슬롯: {new_slot_idx}번"
                         )
 
 # -------------------------------------------------------------
