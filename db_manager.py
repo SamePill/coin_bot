@@ -164,7 +164,7 @@ def get_today_performance(days_ago=0):
                 FROM trade_logs 
                 WHERE account_id = %s 
                   AND trade_time BETWEEN %s AND %s 
-                  AND side = 'SELL' 
+                  AND side like 'SELL%' 
                 GROUP BY engine_name
             """
             
