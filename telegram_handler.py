@@ -15,6 +15,9 @@ import db_manager
 _bot_positions = {}
 _get_seed_money = None
 
+# 💡 [추가] 일시 정지된 엔진 목록을 저장하는 변수
+_paused_engines = set()
+
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """현재 슬롯 운영 상태 및 상세 손익 보고 (/status)"""
     # 1. 오늘 누적 실현 수익 가져오기
@@ -79,31 +82,6 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(msg)
 
-def _run_bot():
-    """실제 텔레그램 폴링 실행"""
-    app = ApplicationBuilder().token(TEL_TOKEN).build()
-    app.add_handler(CommandHandler("status", status_command))
-    app.add_handler(CommandHandler("report", report_command))
-    
-    # 💡 새로 추가한 커맨드 핸들러 등록
-    app.add_handler(CommandHandler("reset", reset_command))
-    app.add_handler(CommandHandler("help", help_command))
-    
-    print("📲 텔레그램 봇 수신 대기 중...")
-    app.run_polling(stop_signals=None)    
-
-def start_telegram_listener(positions_ref, seed_getter):
-    """
-    main.py에서 호출할 엔트리 포인트.
-    실시간 메모리 참조를 전달받고 백그라운드 스레드에서 텔레그램 봇을 가동합니다.
-    """
-    global _bot_positions, _get_seed_money
-    _bot_positions = positions_ref
-    _get_seed_money = seed_getter
-    
-    # 데몬 스레드로 가동 (메인 봇이 꺼지면 같이 꺼짐)
-    threading.Thread(target=_run_bot, daemon=True).start()
-    print("🤖 [텔레그램 커맨드 센터] 백그라운드 리스너 가동 완료.")
 
 async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """지정된 엔진의 모든 포지션을 강제 청산하고 초기화 (/reset 엔진명)"""
@@ -163,6 +141,61 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(f"⚠️ [{target_engine}] 엔진에서 운용 중인(매도할) 코인이 없습니다.")
 
+async def pause_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """특정 엔진의 자동 매매 루프를 일시 정지 (/pause 엔진명)"""
+    if not context.args:
+        await update.message.reply_text("⚠️ 엔진 이름을 입력해주세요.\n👉 사용법: /pause SCALP")
+        return
+        
+    target_engine = context.args[0].upper()
+    _paused_engines.add(target_engine)
+    
+    await update.message.reply_text(
+        f"⏸️ [{target_engine}] 엔진 루프가 일시 정지되었습니다.\n"
+        f"🚨 주의: 루프가 멈추므로 기존 보유 코인의 익절/손절 감시도 함께 정지됩니다."
+    )
+
+async def resume_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """특정 엔진의 자동 매매 루프를 재개 (/resume 엔진명)"""
+    if not context.args:
+        await update.message.reply_text("⚠️ 엔진 이름을 입력해주세요.\n👉 사용법: /resume SCALP")
+        return
+        
+    target_engine = context.args[0].upper()
+    _paused_engines.discard(target_engine) # 목록에서 제거
+    
+    await update.message.reply_text(f"▶️ [{target_engine}] 엔진 루프가 다시 가동을 시작합니다!")
+
+def _run_bot():
+    """실제 텔레그램 폴링 실행"""
+    app = ApplicationBuilder().token(TEL_TOKEN).build()
+    app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CommandHandler("report", report_command))
+    
+    # 💡 새로 추가한 커맨드 핸들러 등록
+    app.add_handler(CommandHandler("reset", reset_command))
+    app.add_handler(CommandHandler("help", help_command))
+
+    # 💡 [추가] 정지 및 재가동 커맨드 핸들러 등록
+    app.add_handler(CommandHandler("pause", pause_command))
+    app.add_handler(CommandHandler("resume", resume_command))
+
+    print("📲 텔레그램 봇 수신 대기 중...")
+    app.run_polling(stop_signals=None)    
+
+def start_telegram_listener(positions_ref, seed_getter):
+    """
+    main.py에서 호출할 엔트리 포인트.
+    실시간 메모리 참조를 전달받고 백그라운드 스레드에서 텔레그램 봇을 가동합니다.
+    """
+    global _bot_positions, _get_seed_money
+    _bot_positions = positions_ref
+    _get_seed_money = seed_getter
+    
+    # 데몬 스레드로 가동 (메인 봇이 꺼지면 같이 꺼짐)
+    threading.Thread(target=_run_bot, daemon=True).start()
+    print("🤖 [텔레그램 커맨드 센터] 백그라운드 리스너 가동 완료.")
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """봇 명령어 사용법 안내 (/help)"""
     msg = """🤖 [Aegis 봇 텔레그램 명령어 안내]
@@ -181,6 +214,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 - /reset SCALP
 - /reset CLASSIC_GRID
 - /reset CORE
+- /reset GRID
+- /reset HUNTER
+
+🔹 /pause [엔진명] : 해당 엔진의 매매 루프 일시 정지 (관망)
+🔹 /resume [엔진명] : 정지된 엔진 매매 루프 재가동
 
 🔹 /help
 현재 보고 계신 도움말을 출력합니다.

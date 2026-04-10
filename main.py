@@ -1289,6 +1289,14 @@ while True:
     try:
         now = datetime.now()
         
+        import telegram_handler
+        if ENGINE_TYPE in telegram_handler._paused_engines:
+            # 콘솔 스팸을 막기 위해 1분에 한 번만 정지 상태임을 출력
+            if now.second % 60 == 0:  
+                print(f"⏸️ [{ENGINE_TYPE}] 엔진 루프 일시 정지 중... (텔레그램 /resume 대기)")
+            time.sleep(600)
+            continue # 아래 엔진 실행 로직을 무시하고 루프 처음으로 돌아감 / 5분마다 체크
+
         # 💡 매일 아침 8시 0분에 한 번만 자동 보고서 발송
         if ENGINE_TYPE == 'GRID' and now.hour == 8 and now.minute == 0 and last_daily_report_day != now.day:
             rows = db_manager.get_today_performance(1)
