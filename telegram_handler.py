@@ -28,7 +28,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_unrealized_profit = 0
 
         for key, p in list(_bot_positions.items()):
-            ic = "🏹" if row['engine'] == 'HUNTER' else "🕸️" if row['engine'] == 'CLASSIC_GRID' else "🛡️" if row['engine'] == 'CORE' else "⚡" if row['engine'] == 'SCALP' else "🎰" if row['engine'] == 'GRID' else "🤖"
+            ic = "🏹" if p['engine'] == 'HUNTER' else "🕸️" if p['engine'] == 'CLASSIC_GRID' else "🛡️" if p['engine'] == 'CORE' else "⚡" if p['engine'] == 'SCALP' else "🎰" if p['engine'] == 'GRID' else "🤖"
             #ic = "🛡️" if p['engine']=='CORE' else ("🏹" if p['engine']=='HUNTER' else "🕸️")
             
             # 💡 p['ticker']를 사용하여 정확한 현재가 조회 (버그 수정)
