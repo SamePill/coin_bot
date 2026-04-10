@@ -93,8 +93,10 @@ def execute_sell(ticker, volume, slot_index=1, profit_rate=0.0, realized_profit=
             curr_p = pyupbit.get_current_price(ticker)
             
             # 2. 현장 장부(current_positions)에서 해당 슬롯 데이터 삭제
-            db_manager.update_position(ENGINE_TYPE, ticker, 0, 0, 'SELL', slot_index)
-            
+            #db_manager.update_position(ENGINE_TYPE, ticker, 0, 0, 'SELL', slot_index)
+            # 💡 [좀비 방지] 매도 완료 후 장부에서 완벽하게 파기
+            db_manager.delete_position(ENGINE_TYPE, ticker, slot_index)
+
             # 3. 영구 로그(trade_logs)에 실현 수익 기록
             db_manager.log_trade(ticker, "SELL", curr_p, volume, profit_rate, realized_profit)
             

@@ -245,3 +245,25 @@ def is_engine_paused(engine_name):
         return False # 테이블이 없거나 에러가 나면 기본값(가동) 반환
     finally:
         if 'conn' in locals() and conn: conn.close()
+
+# -------------------------------------------------------------
+# 🧹 매도/초기화 시 포지션 완전 삭제
+# -------------------------------------------------------------
+def delete_position(engine_name, ticker, slot_index=1):
+    """전량 매도 또는 강제 리셋 시 DB 장부에서 유령 데이터를 완전히 삭제합니다."""
+    try:
+        conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
+        with conn.cursor() as cur:
+            # 내 계정의 해당 엔진, 코인, 슬롯 데이터를 통째로 날림
+            sql = """
+                DELETE FROM current_positions 
+                WHERE account_id = %s AND engine_name = %s AND ticker = %s AND slot_index = %s
+            """
+            cur.execute(sql, (ACCOUNT_ID, engine_name, ticker, slot_index))
+        conn.commit()
+    except Exception as e:
+        print(f"❌ 포지션 완전 삭제 오류: {e}")
+    finally:
+        if 'conn' in locals() and conn: 
+            conn.close()
+            

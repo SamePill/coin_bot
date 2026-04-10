@@ -202,10 +202,10 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 realized_krw = (curr_p_after - buy_price) * sell_vol
                 profit_rate = ((curr_p_after - buy_price) / buy_price) * 100
                 
-                # DB 장부에서 삭제 및 강제 청산 로그 기록
-                db_manager.update_position(target_engine, ticker, 0, 0, 'SELL', slot_index)
+                # 💡 [좀비 방지] 수량을 0으로 두지 않고 장부에서 레코드 자체를 완전 삭제!
+                db_manager.delete_position(target_engine, ticker, slot_index)
                 db_manager.log_trade(ticker, "SELL_FORCE_RESET", curr_p_after, sell_vol, profit_rate, realized_krw)
-                
+
                 reset_count += 1
                 total_realized += realized_krw
 
