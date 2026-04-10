@@ -61,6 +61,7 @@ services:
       - TZ=Asia/Seoul
 
   # 📊 3. 스마트 그리드 엔진 (Smart Grid Engine)
+  # 1코인당 최소 예산: 80,000원 (권장 10만 원 이상)
   grid-bot:
     <<: *bot-common
     container_name: aegis_grid_${ACCOUNT_ID}
@@ -76,6 +77,8 @@ services:
       - ENABLE_TELEGRAM_COMMANDS=True
       - TZ=Asia/Seoul
 
+  # 📊 4. Scalp 그리드 엔진 (Scalp Engine)
+  # 1슬롯당 최소 예산: 6,000원 / 1코인당 최소 예산: 12,000원 (권장 2~3만 원 이상)
   aegis_scalp:
     <<: *bot-common
     container_name: aegis_scalp_${ACCOUNT_ID}
@@ -90,6 +93,7 @@ services:
     network_mode: "host"
 
   # 📊 5. Classic 그리드 엔진 (Classic Grid Engine)
+  # 1코인당 최소 예산: 80,000원 (권장 10만 원 이상)
   classic-grid-bot:
     <<: *bot-common
     container_name: aegis_classic-grid_${ACCOUNT_ID}
