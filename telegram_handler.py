@@ -4,6 +4,10 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 # 📦 설정 및 DB 모듈 로드
+from config import TEL_TOKEN, UPBIT_ACCESS, UPBIT_SECRET # 💡 UPBIT 키 추가
+import db_manager
+
+# 📦 설정 및 DB 모듈 로드
 from config import TEL_TOKEN
 import db_manager
 
@@ -80,6 +84,12 @@ def _run_bot():
     app = ApplicationBuilder().token(TEL_TOKEN).build()
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("report", report_command))
+    
+    # 💡 새로 추가한 커맨드 핸들러 등록
+    app.add_handler(CommandHandler("reset", reset_command))
+    app.add_handler(CommandHandler("help", help_command))
+    
+    print("📲 텔레그램 봇 수신 대기 중...")
     app.run_polling(stop_signals=None)    
 
 def start_telegram_listener(positions_ref, seed_getter):
@@ -95,3 +105,84 @@ def start_telegram_listener(positions_ref, seed_getter):
     threading.Thread(target=_run_bot, daemon=True).start()
     print("🤖 [텔레그램 커맨드 센터] 백그라운드 리스너 가동 완료.")
 
+async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """지정된 엔진의 모든 포지션을 강제 청산하고 초기화 (/reset 엔진명)"""
+    if not context.args:
+        await update.message.reply_text("⚠️ 엔진 이름을 입력해주세요.\n👉 사용법: /reset SCALP 또는 /reset CLASSIC_GRID")
+        return
+
+    target_engine = context.args[0].upper()
+    upbit = pyupbit.Upbit(UPBIT_ACCESS, UPBIT_SECRET)
+    
+    reset_count = 0
+    total_realized = 0
+    keys_to_delete = []
+
+    await update.message.reply_text(f"⏳ [{target_engine}] 엔진 강제 청산을 시작합니다. 잠시만 기다려주세요...")
+
+    # 메모리 장부를 순회하며 타겟 엔진의 코인들을 모두 매도
+    for key, p in list(_bot_positions.items()):
+        if p['engine'] == target_engine:
+            ticker = p['ticker']
+            vol = p['vol']
+            buy_price = p['buy']
+            slot_index = p.get('slot_index', 1)
+            
+            # 실제 지갑 잔고 확인
+            coin = ticker.split('-')[1]
+            actual_vol = upbit.get_balance(coin)
+            sell_vol = min(vol, actual_vol) if actual_vol else 0
+
+            if sell_vol > 0:
+                res = upbit.sell_market_order(ticker, sell_vol)
+                if res:
+                    time.sleep(1) # API 레이트리밋 방지
+                    curr_p = pyupbit.get_current_price(ticker) or buy_price
+                    realized_krw = (curr_p - buy_price) * sell_vol
+                    profit_rate = ((curr_p - buy_price) / buy_price) * 100
+                    
+                    # 💡 DB 완벽 정리 (장부 삭제 및 강제 청산 로그 기록)
+                    db_manager.update_position(target_engine, ticker, 0, 0, 'SELL', slot_index)
+                    db_manager.log_trade(ticker, "SELL_FORCE_RESET", curr_p, sell_vol, profit_rate, realized_krw)
+                    
+                    reset_count += 1
+                    total_realized += realized_krw
+                    keys_to_delete.append(key)
+
+    # 💡 성공적으로 매도된 슬롯들을 봇의 메모리에서도 완전히 삭제
+    for k in keys_to_delete:
+        if k in _bot_positions:
+            del _bot_positions[k]
+
+    if reset_count > 0:
+        await update.message.reply_text(
+            f"🧹 [{target_engine}] 초기화 완료!\n"
+            f"- 청산된 종목 수: {reset_count}개\n"
+            f"- 총 실현 손익: {total_realized:+,.0f}원"
+        )
+    else:
+        await update.message.reply_text(f"⚠️ [{target_engine}] 엔진에서 운용 중인(매도할) 코인이 없습니다.")
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """봇 명령어 사용법 안내 (/help)"""
+    msg = """🤖 [Aegis 봇 텔레그램 명령어 안내]
+
+🔹 /status
+현재 봇이 운용 중인 모든 슬롯의 상태와 수익률, 잔여 예산을 실시간으로 보여줍니다.
+
+🔹 /report [숫자]
+일일 매매 결산(실현 수익) 보고서를 출력합니다.
+- /report : 오늘 수익
+- /report 1 : 어제 수익
+- /report 2 : 그제 수익
+
+🔹 /reset [엔진명]
+지정한 엔진이 쥐고 있는 모든 코인을 즉시 시장가로 강제 매도하고 DB와 슬롯을 초기화합니다.
+- /reset SCALP
+- /reset CLASSIC_GRID
+- /reset CORE
+
+🔹 /help
+현재 보고 계신 도움말을 출력합니다.
+"""
+    await update.message.reply_text(msg)
