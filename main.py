@@ -1115,6 +1115,8 @@ while True:
             loop_delay = 1.5  # 헌터는 1.5초
         elif ENGINE_TYPE == 'GRID':
             loop_delay = 3.0  # 스윙 그물망은 3초
+        elif ENGINE_TYPE == 'CLASSIC_GRID':
+            loop_delay = 0.5  # 클래식 그물망은 0.5초
         else: # CORE
             loop_delay = 5.0  # 코어(추세)는 5초마다 천천히 확인해도 충분함
         time.sleep(loop_delay)
@@ -1129,7 +1131,7 @@ while True:
         # 연속 3회까지만 텔레그램을 발송하고, 이후는 콘솔에만 기록하여 스팸을 방지합니다.
         if consecutive_errors <= 3:
             error_msg = (
-                f"🚨 [{ENGINE_TYPE} 봇 긴급 오류]\n"
+                f"🚨 [{symbol}{ENGINE_TYPE} 봇 긴급 오류]\n"
                 f"시스템 루프에서 에러가 발생했습니다.\n\n"
                 f"원인: {str(e)[:150]}" # 텔레그램 메시지 길이 제한 방지를 위해 150자로 자름
             )
