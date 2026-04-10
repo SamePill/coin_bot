@@ -71,7 +71,7 @@ symbol = "🏹" if ENGINE_TYPE == 'HUNTER' else "🕸️" if ENGINE_TYPE == 'CLA
 print(f"====================================================")
 print(f"🏆 [시스템] Aegis-Elite V17.17 무결성 패치 가동 (모드: {ENGINE_TYPE})")
 if ENGINE_TYPE == 'GRID':
-    print(f"🎰 그리드 슬롯: {GRID_TOTAL_SLOTS} | 다중슬롯: {USE_MULTI_SLOT} (Max {MAX_SLOTS_PER_COIN})")
+    print(f"{symbol} 그리드 슬롯: {GRID_TOTAL_SLOTS} | 다중슬롯: {USE_MULTI_SLOT} (Max {MAX_SLOTS_PER_COIN})")
     send_telegram(
         f"[{symbol}{ENGINE_TYPE} 시동 완료 !!!]\n"
         f"- 그리드 슬롯: {GRID_TOTAL_SLOTS} \n"
@@ -79,7 +79,7 @@ if ENGINE_TYPE == 'GRID':
         f"- 💰 할당 예산: {MAX_BUDGET:,.0f}원"
     )
 elif ENGINE_TYPE == 'SCALP':
-    print(f"🎰 Scalp 슬롯: {SCALP_TOTAL_SLOTS} | 다중슬롯: {SCALP_USE_MULTI_SLOT} (Max {SCALP_MAX_SLOTS_PER_COIN})")
+    print(f"{symbol} Scalp 슬롯: {SCALP_TOTAL_SLOTS} | 다중슬롯: {SCALP_USE_MULTI_SLOT} (Max {SCALP_MAX_SLOTS_PER_COIN})")
     send_telegram(
         f"[{symbol}{ENGINE_TYPE} 시동 완료 !!!]\n"
         f"- 그리드 슬롯: {SCALP_TOTAL_SLOTS} \n"
@@ -87,7 +87,7 @@ elif ENGINE_TYPE == 'SCALP':
         f"- 💰 할당 예산: {MAX_BUDGET:,.0f}원"
     )
 elif ENGINE_TYPE == 'CLASSIC_GRID':
-    print(f"🎰 Scalp 슬롯: {CG_TOTAL_SLOTS} ") #| 다중슬롯: {CG_USE_MULTI_SLOT} (Max {CG_MAX_SLOTS_PER_COIN})")    
+    print(f"{symbol} ClassicGrid 슬롯: {CG_TOTAL_SLOTS} ") #| 다중슬롯: {CG_USE_MULTI_SLOT} (Max {CG_MAX_SLOTS_PER_COIN})")    
     send_telegram(
         f"[{symbol}{ENGINE_TYPE} 시동 완료 !!!]\n"
         f"- 그리드 슬롯: {CG_TOTAL_SLOTS} \n"
@@ -95,7 +95,7 @@ elif ENGINE_TYPE == 'CLASSIC_GRID':
         f"- 💰 할당 예산: {MAX_BUDGET:,.0f}원"
     )
 else:
-    print(f"🎰 타겟 슬롯: {TARGET_SLOTS}")
+    print(f"{symbol} 타겟 슬롯: {TARGET_SLOTS}")
     send_telegram(
         f"[{symbol}{ENGINE_TYPE} 시동 완료 !!!]\n"
         f"- 💰 할당 예산: {MAX_BUDGET:,.0f}원"
@@ -154,7 +154,7 @@ def background_target_fetcher():
             temp_hunter_candidates.append({'ticker': t, 'value': df.iloc[-2]['value'], 'open': df.iloc[-1]['open'], 'range': analyzer.get_atr(df, 5)})
         
         if temp_hunter_candidates:
-            top3 = sorted(temp_hunter_candidates, key=lambda x: x['value'], reverse=True)[:3]
+            top10 = sorted(temp_hunter_candidates, key=lambda x: x['value'], reverse=True)[:3]
             hunter_targets = {item['ticker']: item for item in top3}
     except: pass
     
@@ -357,7 +357,7 @@ def run_hunter_engine(now):
 
     # [2] 신규 진입 (매수)
     current_hunter_count = len([p for p in bot_positions.values() if p['engine'] == 'HUNTER'])
-    if current_hunter_count < TARGET_SLOTS and current_regime not in ["ICE_AGE", "CAUTION"]:
+    if current_hunter_count < TARGET_SLOTS and current_regime not in ["ICE_AGE"]:
         base_invest = (MAX_BUDGET / TOTAL_SLOTS) * REGIME_SETTINGS.get(current_regime, {}).get('ratio', 1.0)
         already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in hunter_pos_items.values())
         krw_balance = safe_balances.get('KRW', 0.0)
@@ -370,7 +370,9 @@ def run_hunter_engine(now):
             if not curr_p: continue
             
             # 💡 [필터] 과매도 VWAP 지지 + 아래꼬리 핀바 확인
-            if analyzer.check_hunter_dip_buy(ticker) and analyzer.is_pin_bar(ticker):
+            # if analyzer.check_hunter_dip_buy(ticker) and analyzer.is_pin_bar(ticker):
+            # 헌터 투자 기준 완화용
+            if analyzer.check_hunter_dip_buy(ticker) or analyzer.is_pin_bar(ticker):
                 
                 # 💡 [안전장치] 예산 락
                 if krw_balance < base_invest or (already_used + base_invest) > MAX_BUDGET:
