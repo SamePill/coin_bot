@@ -89,12 +89,12 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """지정된 엔진의 모든 포지션을 강제 청산하고 초기화 (/reset 엔진명)"""
     if not context.args:
-        await update.message.reply_text("⚠️ 엔진 이름을 입력해주세요.\n👉 사용법: /reset SCALP 또는 /reset CLASSIC_GRID")
+        await update.message.reply_text("⚠️ 엔진 이름을 입력해주세요.\n👉 사용법: /reset SCALP")
         return
 
-
     target_engine = context.args[0].upper()
-    # 💡 [핵심 추가] 입력된 엔진이 유효한지 검사
+    
+    # 입력된 엔진 이름 유효성 검사
     if target_engine not in VALID_ENGINES:
         await update.message.reply_text(
             f"❌ '{target_engine}' 은(는) 존재하지 않는 엔진입니다.\n"
@@ -102,58 +102,88 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    await update.message.reply_text(f"⏳ [{target_engine}] 엔진 강제 청산을 시작합니다. (DB 장부 조회 중...)")
+
     upbit = pyupbit.Upbit(UPBIT_ACCESS, UPBIT_SECRET)
-    
     reset_count = 0
     total_realized = 0
-    keys_to_delete = []
+    dust_cleaned = 0  # 잔돈 청소가 발생한 횟수 기록용
 
-    await update.message.reply_text(f"⏳ [{target_engine}] 엔진 강제 청산을 시작합니다. 잠시만 기다려주세요...")
+    # 💡 내 메모리가 아닌 공용 DB 장부(current_positions)에서 해당 엔진의 코인을 조회
+    import pymysql
+    from config import DB_CONF
+    import time
+    
+    try:
+        conn = pymysql.connect(**DB_CONF, charset='utf8mb4', cursorclass=pymysql.cursors.DictCursor)
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM current_positions WHERE engine_name = %s", (target_engine,))
+            target_positions = cur.fetchall()
+        conn.close()
+    except Exception as e:
+        await update.message.reply_text(f"❌ DB 조회 중 오류 발생: {e}")
+        return
 
-    # 메모리 장부를 순회하며 타겟 엔진의 코인들을 모두 매도
-    for key, p in list(_bot_positions.items()):
-        if p['engine'] == target_engine:
-            ticker = p['ticker']
-            vol = p['vol']
-            buy_price = p['buy']
-            slot_index = p.get('slot_index', 1)
-            
-            # 실제 지갑 잔고 확인
-            coin = ticker.split('-')[1]
-            actual_vol = upbit.get_balance(coin)
-            sell_vol = min(vol, actual_vol) if actual_vol else 0
+    # DB에서 찾은 타겟 엔진의 코인들을 하나씩 강제 매도 처리
+    for p in target_positions:
+        ticker = p['ticker']
+        db_vol = float(p['volume'])
+        buy_price = float(p['buy_price'])
+        slot_index = p.get('slot_index', 1)
+        
+        # 실제 업비트 지갑 잔고 확인
+        coin = ticker.split('-')[1]
+        actual_vol = upbit.get_balance(coin)
+        
+        # 💡 [핵심 방어] 기본적으로 봇이 DB에 기록한 수량과 실제 수량 중 작은 것만 팔도록 설정 (수동 매수분 보호)
+        sell_vol = min(db_vol, actual_vol) if actual_vol else 0
 
-            if sell_vol > 0:
-                res = upbit.sell_market_order(ticker, sell_vol)
-                if res:
-                    time.sleep(1) # API 레이트리밋 방지
-                    curr_p = pyupbit.get_current_price(ticker) or buy_price
-                    realized_krw = (curr_p - buy_price) * sell_vol
-                    profit_rate = ((curr_p - buy_price) / buy_price) * 100
-                    
-                    # 💡 DB 완벽 정리 (장부 삭제 및 강제 청산 로그 기록)
-                    db_manager.update_position(target_engine, ticker, 0, 0, 'SELL', slot_index)
-                    db_manager.log_trade(ticker, "SELL_FORCE_RESET", curr_p, sell_vol, profit_rate, realized_krw)
-                    
-                    reset_count += 1
-                    total_realized += realized_krw
-                    keys_to_delete.append(key)
+        if sell_vol > 0:
+            # 💡 [추가 기능] 현재가를 조회하여 매도 후 남는 잔액 가치(KRW) 평가
+            curr_p = pyupbit.get_current_price(ticker)
+            if curr_p:
+                remaining_vol = actual_vol - sell_vol
+                remaining_krw = remaining_vol * curr_p
+                
+                # 매도하고 남은 코인의 가치가 6,000원 미만인 더스트(먼지)라면? -> 전량 매도로 싹쓸이!
+                if remaining_vol > 0 and remaining_krw < 6000:
+                    sell_vol = actual_vol  # 매도 목표량을 지갑에 있는 전체 수량으로 덮어씀
+                    dust_cleaned += 1
 
-    # 💡 성공적으로 매도된 슬롯들을 봇의 메모리에서도 완전히 삭제
+            # 실제 업비트 매도 주문 전송
+            res = upbit.sell_market_order(ticker, sell_vol)
+            if res:
+                time.sleep(1) # API 레이트리밋 방지
+                curr_p_after = pyupbit.get_current_price(ticker) or curr_p or buy_price
+                realized_krw = (curr_p_after - buy_price) * sell_vol
+                profit_rate = ((curr_p_after - buy_price) / buy_price) * 100
+                
+                # DB 장부에서 삭제 및 강제 청산 로그 기록
+                db_manager.update_position(target_engine, ticker, 0, 0, 'SELL', slot_index)
+                db_manager.log_trade(ticker, "SELL_FORCE_RESET", curr_p_after, sell_vol, profit_rate, realized_krw)
+                
+                reset_count += 1
+                total_realized += realized_krw
+
+    # 만약 타겟 엔진이 텔레그램을 돌리고 있는 본인(예: GRID)이라면, 자신의 램(RAM)도 비워줌
+    keys_to_delete = [k for k, v in list(_bot_positions.items()) if v['engine'] == target_engine]
     for k in keys_to_delete:
-        if k in _bot_positions:
-            del _bot_positions[k]
+        del _bot_positions[k]
 
     if reset_count > 0:
-        await update.message.reply_text(
+        msg = (
             f"🧹 [{target_engine}] 초기화 완료!\n"
             f"- 청산된 종목 수: {reset_count}개\n"
-            f"- 총 실현 손익: {total_realized:+,.0f}원"
+            f"- 총 실현 손익: {total_realized:+,.0f}원\n"
         )
+        if dust_cleaned > 0:
+            msg += f"✨ (잔돈 청소 완료: {dust_cleaned}개 종목의 6천원 미만 더스트도 함께 정리되었습니다.)\n"
+            
+        msg += f"💡 팁: 청산 후 엔진이 다시 코인을 사지 않게 하려면 /pause {target_engine} 도 잊지 마세요!"
+        await update.message.reply_text(msg)
     else:
-        await update.message.reply_text(f"⚠️ [{target_engine}] 엔진에서 운용 중인(매도할) 코인이 없습니다.")
-
-
+        await update.message.reply_text(f"⚠️ [{target_engine}] 엔진 장부에 청산할 코인이 없습니다.")
+        
 
 async def pause_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """특정 엔진의 자동 매매 루프를 일시 정지 (/pause 엔진명)"""
