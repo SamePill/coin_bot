@@ -7,12 +7,9 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from config import TEL_TOKEN, UPBIT_ACCESS, UPBIT_SECRET # 💡 UPBIT 키 추가
 import db_manager
 
-# 📦 설정 및 DB 모듈 로드
-from config import TEL_TOKEN
-import db_manager
-
 # 메인 프로세스의 실시간 상태를 참조할 전역 변수
 _bot_positions = {}
+_bot_positions_lock = None
 _get_seed_money = None
 
 # 💡 [추가] 일시 정지된 엔진 목록을 저장하는 변수
@@ -210,9 +207,12 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 total_realized += realized_krw
 
     # 만약 타겟 엔진이 텔레그램을 돌리고 있는 본인(예: GRID)이라면, 자신의 램(RAM)도 비워줌
-    keys_to_delete = [k for k, v in list(_bot_positions.items()) if v['engine'] == target_engine]
-    for k in keys_to_delete:
-        del _bot_positions[k]
+    if _bot_positions_lock:
+        with _bot_positions_lock:
+            keys_to_delete = [k for k, v in list(_bot_positions.items()) if v['engine'] == target_engine]
+            for k in keys_to_delete:
+                if k in _bot_positions:
+                    del _bot_positions[k]
 
     if reset_count > 0:
         msg = (
@@ -291,13 +291,14 @@ def _run_bot():
     print("📲 텔레그램 봇 수신 대기 중...")
     app.run_polling(stop_signals=None)    
 
-def start_telegram_listener(positions_ref, seed_getter):
+def start_telegram_listener(positions_ref, lock_ref, seed_getter):
     """
     main.py에서 호출할 엔트리 포인트.
     실시간 메모리 참조를 전달받고 백그라운드 스레드에서 텔레그램 봇을 가동합니다.
     """
-    global _bot_positions, _get_seed_money
+    global _bot_positions, _bot_positions_lock, _get_seed_money
     _bot_positions = positions_ref
+    _bot_positions_lock = lock_ref
     _get_seed_money = seed_getter
     
     # 데몬 스레드로 가동 (메인 봇이 꺼지면 같이 꺼짐)

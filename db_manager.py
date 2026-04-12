@@ -1,8 +1,18 @@
 from datetime import datetime
+from dbutils.pooled_db import PooledDB
 import pymysql
 import pyupbit
 import os
 from config import DB_CONF, CORE_UNIVERSE, send_telegram
+
+pool = PooledDB(
+    creator=pymysql,
+    maxconnections=10, # 최대 동시 연결 수
+    mincached=2,
+    blocking=True,
+    **DB_CONF
+)
+
 
 # 💡 [추가/수정] 환경 변수에서 엔진 타입과 '계정 식별자(ACCOUNT_ID)' 로드
 ENGINE_TYPE = os.getenv('ENGINE_TYPE', 'WHAT?').upper()
@@ -16,7 +26,8 @@ def log_trade(market, side, price, volume, profit_rate=0.0, realized_profit=0.0)
     💡 매매 내역과 실현 수익금을 기록합니다. (다중 계정 격리 반영)
     """
     try:
-        conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
+        # conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
+        conn = pool.connection()
         with conn.cursor() as cur:
             # 💡 [수정] account_id 컬럼 추가
             sql = """
@@ -45,7 +56,8 @@ def log_trade(market, side, price, volume, profit_rate=0.0, realized_profit=0.0)
 # -------------------------------------------------------------
 def get_engine_invested_total(engine_name):
     """💡 특정 계정의 특정 엔진이 사용 중인 총 투자 원금 조회"""
-    conn = pymysql.connect(**DB_CONF)
+    #conn = pymysql.connect(**DB_CONF)
+    conn = pool.connection()
     try:
         with conn.cursor() as cur:
             # 💡 [수정] account_id 조건 추가
@@ -63,7 +75,9 @@ def get_engine_invested_total(engine_name):
 # 🗄️ 현장 장부 관리 (update_position)
 # -------------------------------------------------------------
 def update_position(engine_name, ticker, price, volume, side, slot_index=1):
-    conn = pymysql.connect(**DB_CONF)
+    #conn = pymysql.connect(**DB_CONF)
+    conn = pool.connection()
+    
     try:
         with conn.cursor() as cur:
             if side == 'BUY':
@@ -95,7 +109,8 @@ def recover_bot_positions(upbit):
     positions = {}
     conn = None
     try:
-        conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
+        # conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
+        conn = pool.connection()
         with conn.cursor(pymysql.cursors.DictCursor) as cur:
             # 💡 [수정] WHERE 조건에 engine_name 추가 (타 엔진의 종목을 가져오는 버그 방지)
             sql = """
@@ -144,7 +159,9 @@ def get_today_performance(days_ago=0):
     - 파라미터(days_ago): 0 = 오늘, 1 = 어제, 2 = 그제
     """
     try:
-        conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
+        # conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
+        conn = pool.connection()
+    
         with conn.cursor(pymysql.cursors.DictCursor) as cur:
             
             # 1. 입력받은 days_ago 만큼 과거의 날짜 계산
@@ -191,7 +208,9 @@ def update_position_state(key, real_avg_price, real_vol, next_level):
     conn = None
     
     try:
-        conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
+        # conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
+        conn = pool.connection()
+    
         with conn.cursor() as cur:
             # 💡 [수정] account_id 조건 추가 및 안전성을 위해 engine_name 조건도 추가
             sql = """
@@ -212,7 +231,9 @@ def update_position_state(key, real_avg_price, real_vol, next_level):
 def set_engine_pause_state(engine_name, is_paused):
     """특정 엔진의 일시 정지 상태를 DB에 기록합니다."""
     try:
-        conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
+        # conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
+        conn = pool.connection()
+    
         with conn.cursor() as cur:
             # 테이블이 없으면 자동 생성
             cur.execute("""
@@ -237,7 +258,9 @@ def set_engine_pause_state(engine_name, is_paused):
 def is_engine_paused(engine_name):
     """현재 엔진이 일시 정지 상태인지 DB에서 확인합니다."""
     try:
-        conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
+        # conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
+        conn = pool.connection()
+    
         with conn.cursor(pymysql.cursors.DictCursor) as cur:
             # 에러 방지를 위해 테이블 존재 여부를 무시하고 셀렉트 시도
             cur.execute("SELECT is_paused FROM engine_status WHERE engine_name = %s", (engine_name,))
@@ -254,7 +277,9 @@ def is_engine_paused(engine_name):
 def delete_position(engine_name, ticker, slot_index=1):
     """전량 매도 또는 강제 리셋 시 DB 장부에서 유령 데이터를 완전히 삭제합니다."""
     try:
-        conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
+        # conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
+        conn = pool.connection()
+    
         with conn.cursor() as cur:
             # 내 계정의 해당 엔진, 코인, 슬롯 데이터를 통째로 날림
             sql = """
