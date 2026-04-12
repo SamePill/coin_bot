@@ -167,7 +167,9 @@ def get_today_performance(days_ago=0):
                   AND side like 'SELL%' 
                 GROUP BY engine_name
             """
-            
+            print(f"보고서 생성 파라메터: {days_ago} / {start_time} ~ {end_time} \n")
+            print(f"쿼리: {sql}")
+
             # 쿼리에 계정 ID와 시작/종료 시간을 파라미터로 전달
             cur.execute(sql, (ACCOUNT_ID, start_time, end_time))
             return cur.fetchall()
