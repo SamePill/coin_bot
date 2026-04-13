@@ -28,6 +28,13 @@ CG_TOTAL_SLOTS = int(os.getenv('CG_TOTAL_SLOTS', 2))
 CG_USE_MULTI_SLOT = os.getenv('SCALP_USE_MULTI_SLOT', 'True').lower() == 'true'
 CG_MAX_SLOTS_PER_COIN = int(os.getenv('SCALP_MAX_SLOTS_PER_COIN', 2))
 
+# 💡 [추가] 도커 컨테이너 동시 시작 시 API 폭주(DDoS) 방지를 위한 엔진별 순차 지연 가동
+startup_delays = {'CORE': 12, 'HUNTER': 9, 'GRID': 6, 'SCALP': 3, 'CLASSIC_GRID': 0}
+delay_sec = startup_delays.get(ENGINE_TYPE, 0)
+if delay_sec > 0:
+    print(f"🚦 [{ENGINE_TYPE}] API 병목 방지를 위해 {delay_sec}초 대기 후 가동합니다...")
+    time.sleep(delay_sec)
+
 # 💡 [V17.18] Monkey Patching (API 호출 초과 시 오토 힐링 추가)
 _original_get_current_price = pyupbit.get_current_price
 
@@ -39,11 +46,15 @@ def _safe_get_current_price(ticker, limit_info=False, verbose=False):
             if res is not None: 
                 return res
         except Exception as e:
-            if "Too Many Requests" in str(e) or "429" in str(e):
+            err_msg = str(e)
+            if "Too Many Requests" in err_msg or "429" in err_msg:
                 print(f"⚠️ [API 과부하] 호출 제한 도달. 0.5초 대기 후 재시도... ({i+1}/{retries})")
                 time.sleep(0.5) # 숨 고르기
+            elif "string indices must be integers" in err_msg:
+                print(f"⚠️ [API 차단 방어] 업비트 방화벽(WAF) HTML 응답 감지. 2초 대기... ({i+1}/{retries})")
+                time.sleep(2)
             else:
-                print(f"⚠️ [네트워크 에러] 시세 조회 지연 - 사유: {str(e)[:50]}... ({i+1}/{retries})")
+                print(f"⚠️ [네트워크 에러] 시세 조회 지연 - 사유: {err_msg[:50]}... ({i+1}/{retries})")
                 time.sleep(0.5)
     return {} if isinstance(ticker, list) else None
 
@@ -172,7 +183,7 @@ def background_target_fetcher():
     
     # 1. CORE 타겟 스캔 (돌파 매매용)
     for ticker in CORE_UNIVERSE:
-        time.sleep(0.15)
+        time.sleep(0.3)  # 🚀 [API 차단 방지] 0.15초 -> 0.3초 완화
         df = pyupbit.get_ohlcv(ticker, interval="day", count=20)
         if not isinstance(df, pd.DataFrame) or df.empty or len(df) < 6: continue
         df['noise'] = 1 - abs(df['open'] - df['close']) / (df['high'] - df['low'])
@@ -187,7 +198,7 @@ def background_target_fetcher():
         tickers = pyupbit.get_tickers(fiat="KRW")
         for t in tickers:
             if t in CORE_UNIVERSE: continue 
-            time.sleep(0.1)
+            time.sleep(0.3)  # 🚀 [API 차단 방지] 0.1초 -> 0.3초 완화
             df = pyupbit.get_ohlcv(t, interval="day", count=6)
             if not isinstance(df, pd.DataFrame) or df.empty or len(df) < 6: continue
             temp_hunter_candidates.append({'ticker': t, 'value': df.iloc[-2]['value'], 'open': df.iloc[-1]['open'], 'range': analyzer.get_atr(df, 5)})
