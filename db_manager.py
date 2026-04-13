@@ -181,10 +181,10 @@ def get_today_performance(days_ago=0):
                 FROM trade_logs 
                 WHERE account_id = %s 
                   AND trade_time BETWEEN %s AND %s 
-                  AND side like 'SELL%' 
+                  AND side LIKE 'SELL%%' 
                 GROUP BY engine_name
             """
-            print(f"보고서 생성 파라메터: {days_ago} / {start_time} ~ {end_time} \n")
+            print(f"{ACCOUNT_ID} 보고서 생성 파라메터: {days_ago} / {start_time} ~ {end_time} \n")
             print(f"쿼리: {sql}")
 
             # 쿼리에 계정 ID와 시작/종료 시간을 파라미터로 전달
