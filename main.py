@@ -43,7 +43,7 @@ def _safe_get_current_price(ticker, limit_info=False, verbose=False):
                 print(f"⚠️ [API 과부하] 호출 제한 도달. 0.5초 대기 후 재시도... ({i+1}/{retries})")
                 time.sleep(0.5) # 숨 고르기
             else:
-                print(f"⚠️ [네트워크 에러] 시세 조회 지연(Timeout). 0.5초 대기 후 재시도... ({i+1}/{retries})")
+                print(f"⚠️ [네트워크 에러] 시세 조회 지연 - 사유: {str(e)[:50]}... ({i+1}/{retries})")
                 time.sleep(0.5)
     return {} if isinstance(ticker, list) else None
 
@@ -59,7 +59,8 @@ def _safe_get_balance(self, *args, **kwargs):
             res = _original_get_balance(self, *args, **kwargs)
             if res is not None:
                 return res
-        except Exception:
+        except Exception as e:
+            print(f"⚠️ [네트워크 에러] 단일 잔고 조회 지연 - 사유: {str(e)[:50]}... ({i+1}/{retries})")
             time.sleep(0.5)
     return 0
 
@@ -80,7 +81,7 @@ def _safe_get_balances(self, *args, **kwargs):
                 print(f"⚠️ [API 과부하] 잔고 조회 호출 제한. 0.5초 대기 후 재시도... ({i+1}/{retries})")
                 time.sleep(0.5)
             else:
-                print(f"⚠️ [네트워크 에러] 잔고 조회 지연(Timeout). 1초 대기 후 재시도... ({i+1}/{retries})")
+                print(f"⚠️ [네트워크 에러] 전체 잔고 조회 지연 - 사유: {str(e)[:50]}... ({i+1}/{retries})")
                 time.sleep(1)
     return []
 
