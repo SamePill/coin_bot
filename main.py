@@ -48,14 +48,14 @@ def _safe_get_current_price(ticker, limit_info=False, verbose=False):
         except Exception as e:
             err_msg = str(e)
             if "Too Many Requests" in err_msg or "429" in err_msg:
-                print(f"⚠️ [API 과부하] 호출 제한 도달. 0.5초 대기 후 재시도... ({i+1}/{retries})")
-                time.sleep(0.5) # 숨 고르기
-            elif "string indices must be integers" in err_msg:
-                print(f"⚠️ [API 차단 방어] 업비트 방화벽(WAF) HTML 응답 감지. 2초 대기... ({i+1}/{retries})")
-                time.sleep(2)
+                print(f"⚠️ [API 과부하] 호출 제한 도달. 2초 대기 후 재시도... ({i+1}/{retries})")
+                time.sleep(2) # 숨 고르기
+            elif "string indices must be integers" in err_msg or err_msg == "0" or "list index" in err_msg:
+                print(f"⚠️ [API 차단 방어] 업비트 방화벽(WAF) 차단 응답 감지. 3초 대기... ({i+1}/{retries})")
+                time.sleep(3)
             else:
                 print(f"⚠️ [네트워크 에러] 시세 조회 지연 - 사유: {err_msg[:50]}... ({i+1}/{retries})")
-                time.sleep(0.5)
+                time.sleep(1)
     return {} if isinstance(ticker, list) else None
 
 pyupbit.get_current_price = _safe_get_current_price
@@ -71,8 +71,13 @@ def _safe_get_balance(self, *args, **kwargs):
             if res is not None:
                 return res
         except Exception as e:
-            print(f"⚠️ [네트워크 에러] 단일 잔고 조회 지연 - 사유: {str(e)[:50]}... ({i+1}/{retries})")
-            time.sleep(0.5)
+            err_msg = str(e)
+            if "Too Many" in err_msg or "429" in err_msg or err_msg == "0" or "string indices" in err_msg:
+                print(f"⚠️ [API 차단 방어] 단일 잔고 조회 WAF 차단. 2초 대기... ({i+1}/{retries})")
+                time.sleep(2)
+            else:
+                print(f"⚠️ [네트워크 에러] 단일 잔고 조회 지연 - 사유: {err_msg[:50]}... ({i+1}/{retries})")
+                time.sleep(1)
     return 0
 
 pyupbit.Upbit.get_balance = _safe_get_balance
@@ -88,15 +93,47 @@ def _safe_get_balances(self, *args, **kwargs):
             if res is not None:
                 return res
         except Exception as e:
-            if "Too Many Requests" in str(e) or "429" in str(e):
-                print(f"⚠️ [API 과부하] 잔고 조회 호출 제한. 0.5초 대기 후 재시도... ({i+1}/{retries})")
-                time.sleep(0.5)
+            err_msg = str(e)
+            if "Too Many Requests" in err_msg or "429" in err_msg or err_msg == "0" or "string indices" in err_msg:
+                print(f"⚠️ [API 차단 방어] 전체 잔고 조회 WAF 차단. 2초 대기... ({i+1}/{retries})")
+                time.sleep(2)
             else:
-                print(f"⚠️ [네트워크 에러] 전체 잔고 조회 지연 - 사유: {str(e)[:50]}... ({i+1}/{retries})")
+                print(f"⚠️ [네트워크 에러] 전체 잔고 조회 지연 - 사유: {err_msg[:50]}... ({i+1}/{retries})")
                 time.sleep(1)
     return []
 
 pyupbit.Upbit.get_balances = _safe_get_balances
+
+# 💡 [추가] get_ohlcv 무한 호출 방지 (일봉 데이터 캐싱 패치)
+_original_get_ohlcv = pyupbit.get_ohlcv
+_ohlcv_cache = {}
+
+def _safe_get_ohlcv(ticker, interval="day", count=200, to=None, period=0.1):
+    now = datetime.now()
+    if to is None and interval == "day":
+        cache_key = f"{ticker}_{interval}_{count}"
+        if cache_key in _ohlcv_cache:
+            cached_time, cached_df = _ohlcv_cache[cache_key]
+            if (now - cached_time).total_seconds() < 3600: # 1시간 동안 메모리 재사용
+                return cached_df
+
+    time.sleep(0.1) # 기본 API 속도 조절
+    for i in range(3):
+        try:
+            df = _original_get_ohlcv(ticker, interval=interval, count=count, to=to, period=period)
+            if df is not None and not (isinstance(df, list) and len(df) == 0):
+                if to is None and interval == "day":
+                    _ohlcv_cache[cache_key] = (now, df)
+                return df
+        except Exception as e:
+            err_msg = str(e)
+            if "Too Many" in err_msg or "429" in err_msg or "string" in err_msg or err_msg == "0":
+                time.sleep(2)
+            else:
+                time.sleep(0.5)
+    return None
+
+pyupbit.get_ohlcv = _safe_get_ohlcv
 
 # 사용자 정의 모듈 임포트
 from config import *
