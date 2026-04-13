@@ -1067,7 +1067,7 @@ ENABLE_TELEGRAM_COMMANDS = os.getenv('ENABLE_TELEGRAM_COMMANDS', 'False').lower(
 
 if ENABLE_TELEGRAM_COMMANDS:
     # 💡 도커 컴포즈에서 True로 설정된 단 하나의 엔진만 이 코드를 실행합니다.
-    telegram_handler.start_telegram_listener(bot_positions, lambda: MAX_BUDGET)
+    telegram_handler.start_telegram_listener(bot_positions, None, lambda: MAX_BUDGET)
     print(f"🤖 [{ENGINE_TYPE}] 텔레그램 명령 수신 당번 가동 시작!")
 else:
     print(f"🔇 [{ENGINE_TYPE}] 텔레그램 명령 수신을 스킵합니다. (중복 방지 모드)")
