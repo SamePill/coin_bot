@@ -28,8 +28,18 @@ CG_TOTAL_SLOTS = int(os.getenv('CG_TOTAL_SLOTS', 2))
 CG_USE_MULTI_SLOT = os.getenv('SCALP_USE_MULTI_SLOT', 'True').lower() == 'true'
 CG_MAX_SLOTS_PER_COIN = int(os.getenv('SCALP_MAX_SLOTS_PER_COIN', 2))
 
-# 💡 [추가] 도커 컨테이너 동시 시작 시 API 폭주(DDoS) 방지를 위한 엔진별 순차 지연 가동
-startup_delays = {'CORE': 12, 'HUNTER': 9, 'GRID': 6, 'SCALP': 3, 'CLASSIC_GRID': 0}
+# 💡 [동적 분산] ENABLED_ENGINES를 읽어와 활성화된 엔진 수만큼 API 호출 시간을 균등 분배합니다.
+ENABLED_ENGINES_STR = os.getenv('ENABLED_ENGINES', 'CORE,HUNTER,GRID,SCALP,CLASSIC_GRID')
+ACTIVE_ENGINES = [e.strip().upper() for e in ENABLED_ENGINES_STR.split(',') if e.strip()]
+
+active_count = len(ACTIVE_ENGINES) if len(ACTIVE_ENGINES) > 0 else 1
+regime_interval = max(1, 15 // active_count) # 15분 주기를 활성 엔진 수로 나눔 (예: 3개면 5분 간격)
+
+startup_delays, regime_offsets = {}, {}
+for i, engine in enumerate(ACTIVE_ENGINES):
+    startup_delays[engine] = i * 4             # 시작 지연: 0초, 4초, 8초... 동적 할당
+    regime_offsets[engine] = i * regime_interval # 백그라운드 스캔: 0분, 5분, 10분... 동적 할당
+
 delay_sec = startup_delays.get(ENGINE_TYPE, 0)
 if delay_sec > 0:
     print(f"🚦 [{ENGINE_TYPE}] API 병목 방지를 위해 {delay_sec}초 대기 후 가동합니다...")
@@ -110,11 +120,16 @@ _ohlcv_cache = {}
 
 def _safe_get_ohlcv(ticker, interval="day", count=200, to=None, period=0.1):
     now = datetime.now()
-    if to is None and interval == "day":
+    if to is None:
         cache_key = f"{ticker}_{interval}_{count}"
-        if cache_key in _ohlcv_cache:
+        
+        cache_duration = 0
+        if interval == "day": cache_duration = 3600
+        elif interval == "minute60": cache_duration = 1800 # 💡 [추가] 60분봉도 30분 동안 캐싱
+        
+        if cache_duration > 0 and cache_key in _ohlcv_cache:
             cached_time, cached_df = _ohlcv_cache[cache_key]
-            if (now - cached_time).total_seconds() < 3600: # 1시간 동안 메모리 재사용
+            if (now - cached_time).total_seconds() < cache_duration: 
                 return cached_df
 
     time.sleep(0.1) # 기본 API 속도 조절
@@ -122,7 +137,7 @@ def _safe_get_ohlcv(ticker, interval="day", count=200, to=None, period=0.1):
         try:
             df = _original_get_ohlcv(ticker, interval=interval, count=count, to=to, period=period)
             if df is not None and not (isinstance(df, list) and len(df) == 0):
-                if to is None and interval == "day":
+                if cache_duration > 0:
                     _ohlcv_cache[cache_key] = (now, df)
                 return df
         except Exception as e:
@@ -153,8 +168,13 @@ last_grid_eval_time = None
 next_day_core_targets, next_day_hunter_targets = {}, {}
 last_target_fetch_time = None
 budget_lock_notified = {'SCALP': False, 'GRID': False, 'CLASSIC_GRID': False}
-last_panic_check_time = None
+last_panic_check_time = datetime.now() + timedelta(seconds=delay_sec) # 💡 [분산] 10초 주기 체크를 컨테이너별로 오프셋 적용
 is_panic_state = False
+last_regime_check_time = None
+
+# 💡 [API 몰림 방지] 활성 엔진 순서에 맞춰 최초 그리드 스캔 시간을 15분 간격으로 동적 분산
+idx = ACTIVE_ENGINES.index(ENGINE_TYPE) if ENGINE_TYPE in ACTIVE_ENGINES else 0
+last_grid_eval_time = datetime.now() - timedelta(hours=5, minutes=60 - (idx * 15))
 
 symbol = "🏹" if ENGINE_TYPE == 'HUNTER' else "🕸️" if ENGINE_TYPE == 'CLASSIC_GRID' else "🛡️" if ENGINE_TYPE == 'CORE' else "⚡" if ENGINE_TYPE == 'SCALP' else "🎰" if ENGINE_TYPE == 'GRID' else "🤖"
 print(f"====================================================")
@@ -293,7 +313,7 @@ def evaluate_grid_candidates():
             score = analyzer.get_grid_suitability_score(t)
             if score > 0:
                 scores.append({'ticker': t, 'score': score})
-            time.sleep(0.2) # 💡 [API 차단 방지] 초당 20회 호출(0.05초)을 초당 5회(0.2초)로 완화
+            time.sleep(0.3) # 💡 [API 차단 방지] 다중 컨테이너 환경 고려 0.3초(약 3.3회/초)로 추가 완화
             
         sorted_scores = sorted(scores, key=lambda x: x['score'], reverse=True)
         top_grid_candidates = [item['ticker'] for item in sorted_scores[:GRID_TOTAL_SLOTS]]
@@ -931,7 +951,10 @@ def run_classic_grid_engine(now):
         # -------------------------------------------------------------
         # 📈 2. 그리드 상단 익절 (15% 부분 매도) & 다이어트 로직
         # -------------------------------------------------------------
-        step = analyzer.get_grid_step(ticker) or pos.get('grid_step', curr_p * 0.01)
+        step = pos.get('grid_step')
+        if not step: # 💡 [API 최적화] 매 루프마다 호출되던 병목을 최초 1회 캐싱으로 100% 제거
+            step = analyzer.get_grid_step(ticker) or (curr_p * 0.01)
+            pos['grid_step'] = step
         
         if curr_p >= pos['last_grid_price'] + step:
             # 보유량의 15% 또는 최소 6000원치 매도
@@ -1173,14 +1196,17 @@ while True:
             send_telegram(report_msg)
             last_daily_report_hour = now.hour # 💡 해당 시간 발송 완료 기록
 
-
-        if now.minute % 15 == 0:
+        # 💡 [동적 분산] 현재 실행 중인 엔진 리스트 기반으로 계산된 offset 적용
+        offset = regime_offsets.get(ENGINE_TYPE, 0)
+        if now.minute % 15 == offset and (last_regime_check_time is None or (now - last_regime_check_time).total_seconds() > 60):
             current_regime = analyzer.get_market_regime(current_regime)
+            last_regime_check_time = now
 
         # 💡 [추가] 4시간마다 CORE/HUNTER 타겟 스캔 (50분 언저리에 실행하여 API 몰림 방지)
         # 💡 [수정] CORE와 HUNTER 엔진일 때만 레이더 가동
         if ENGINE_TYPE in ['CORE', 'HUNTER']:
-            if now.hour % 4 == 0 and now.minute == 50 and (last_target_fetch_time is None or now >= last_target_fetch_time + timedelta(hours=3)):
+            fetch_minute = 50 if ENGINE_TYPE == 'CORE' else 55 # 💡 [API 분산] CORE는 50분, HUNTER는 55분
+            if now.hour % 4 == 0 and now.minute == fetch_minute and (last_target_fetch_time is None or now >= last_target_fetch_time + timedelta(hours=3)):
                 last_target_fetch_time = now 
                 threading.Thread(target=background_target_fetcher).start()
 
