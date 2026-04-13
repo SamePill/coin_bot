@@ -153,6 +153,8 @@ last_grid_eval_time = None
 next_day_core_targets, next_day_hunter_targets = {}, {}
 last_target_fetch_time = None
 budget_lock_notified = {'SCALP': False, 'GRID': False, 'CLASSIC_GRID': False}
+last_panic_check_time = None
+is_panic_state = False
 
 symbol = "🏹" if ENGINE_TYPE == 'HUNTER' else "🕸️" if ENGINE_TYPE == 'CLASSIC_GRID' else "🛡️" if ENGINE_TYPE == 'CORE' else "⚡" if ENGINE_TYPE == 'SCALP' else "🎰" if ENGINE_TYPE == 'GRID' else "🤖"
 print(f"====================================================")
@@ -291,7 +293,7 @@ def evaluate_grid_candidates():
             score = analyzer.get_grid_suitability_score(t)
             if score > 0:
                 scores.append({'ticker': t, 'score': score})
-            time.sleep(0.05) 
+            time.sleep(0.2) # 💡 [API 차단 방지] 초당 20회 호출(0.05초)을 초당 5회(0.2초)로 완화
             
         sorted_scores = sorted(scores, key=lambda x: x['score'], reverse=True)
         top_grid_candidates = [item['ticker'] for item in sorted_scores[:GRID_TOTAL_SLOTS]]
@@ -1187,7 +1189,12 @@ while True:
                 evaluate_grid_candidates()
                 last_grid_eval_time = now
 
-        if analyzer.check_panic_fall():
+        # 💡 [수정] 패닉 체크를 매 루프마다 하지 않고 컨테이너별로 10초에 한 번만 수행하도록 완화하여 API 폭주 방지
+        if last_panic_check_time is None or (now - last_panic_check_time).total_seconds() >= 10:
+            is_panic_state = analyzer.check_panic_fall()
+            last_panic_check_time = now
+
+        if is_panic_state:
             time.sleep(10); continue
 
         # 💡 [수정] DB를 조회하여 엔진 일시 정지 상태 확인
@@ -1218,13 +1225,13 @@ while True:
         #loop_delay = 1 if ENGINE_TYPE == 'HUNTER' else 3
         # 💡 [수정] 엔진별 루프 대기 시간(심장 박동) 차등화로 API 병목 분산
         if ENGINE_TYPE == 'SCALP': 
-            loop_delay = 0.5  # 짤짤이는 0.5초마다 아주 빠르게 반응!
+            loop_delay = 1.5  # 0.5초 -> 1.5초 완화 (API 차단 방지)
         elif ENGINE_TYPE == 'HUNTER': 
-            loop_delay = 1.5  # 헌터는 1.5초
+            loop_delay = 2.0  # 1.5초 -> 2.0초 완화
         elif ENGINE_TYPE == 'GRID':
             loop_delay = 3.0  # 스윙 그물망은 3초
         elif ENGINE_TYPE == 'CLASSIC_GRID':
-            loop_delay = 0.5  # 클래식 그물망은 0.5초
+            loop_delay = 1.5  # 0.5초 -> 1.5초 완화 (API 차단 방지)
         else: # CORE
             loop_delay = 5.0  # 코어(추세)는 5초마다 천천히 확인해도 충분함
         time.sleep(loop_delay)

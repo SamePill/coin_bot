@@ -200,7 +200,7 @@ def get_market_regime(current_regime):
         uptrend_count = 0
         for t in tickers[:30]:
             df = pyupbit.get_ohlcv(t, interval="day", count=21)
-            time.sleep(0.05)
+            time.sleep(0.2) # 💡 [API 차단 방지] 초당 20회 호출(0.05초)을 초당 5회(0.2초)로 완화
             if df is not None and pyupbit.get_current_price(t) >= df['close'].mean():
                 uptrend_count += 1
         
