@@ -10,6 +10,8 @@ pool = PooledDB(
     maxconnections=10, # 최대 동시 연결 수
     mincached=2,
     blocking=True,
+    ping=1,            # 💡 [추가] 커넥션 풀에서 가져올 때 유효성(ping) 검사 수행 (좀비 커넥션 방지)
+    charset='utf8mb4', # 💡 [추가] 한글/이모지 등 문자열 깨짐 방지 
     **DB_CONF
 )
 
