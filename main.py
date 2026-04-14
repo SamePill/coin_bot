@@ -49,6 +49,16 @@ if delay_sec > 0:
 _original_get_current_price = pyupbit.get_current_price
 
 def _safe_get_current_price(ticker, limit_info=False, verbose=False):
+    # 💡 [추가] 리스트가 100개를 초과하면 분할해서 조회 (업비트 제한 및 WAF URL 길이 차단 방어)
+    if isinstance(ticker, list) and len(ticker) > 100:
+        result = {}
+        for idx in range(0, len(ticker), 100):
+            chunk = ticker[idx:idx+100]
+            chunk_res = _safe_get_current_price(chunk, limit_info, verbose)
+            if isinstance(chunk_res, dict):
+                result.update(chunk_res)
+        return result
+
     retries = 3
     for i in range(retries):
         try:
@@ -60,8 +70,10 @@ def _safe_get_current_price(ticker, limit_info=False, verbose=False):
             if "Too Many Requests" in err_msg or "429" in err_msg:
                 print(f"⚠️ [API 과부하] 호출 제한 도달. 2초 대기 후 재시도... ({i+1}/{retries})")
                 time.sleep(2) # 숨 고르기
-            elif "string indices must be integers" in err_msg or err_msg == "0" or "list index" in err_msg:
-                print(f"⚠️ [API 차단 방어] 업비트 방화벽(WAF) 차단 응답 감지. 3초 대기... ({i+1}/{retries})")
+            elif "string indices must be integers" in err_msg or err_msg == "0" or "list index" in err_msg or "JSONDecodeError" in err_msg:
+                # 💡 어떤 종목 조회 중 차단되었는지 로그 출력 추가
+                ticker_str = str(ticker)[:50] + "..." if len(str(ticker)) > 50 else str(ticker)
+                print(f"⚠️ [API 차단 방어] 업비트 WAF 차단 응답 감지 (대상: {ticker_str}). 3초 대기... ({i+1}/{retries})")
                 time.sleep(3)
             else:
                 print(f"⚠️ [네트워크 에러] 시세 조회 지연 - 사유: {err_msg[:50]}... ({i+1}/{retries})")
@@ -516,7 +528,8 @@ def run_grid_engine(now):
     grid_pos_items = {k: v for k, v in bot_positions.items() if v['engine'] == 'GRID'}
     active_tickers = {} 
     
-    watch_list = list(set([pos['ticker'] for pos in grid_pos_items.values()] + top_grid_candidates))
+    raw_watch_list = list(set([pos['ticker'] for pos in grid_pos_items.values()] + top_grid_candidates))
+    watch_list = [t for t in raw_watch_list if isinstance(t, str) and t.startswith("KRW-")]
     
     current_prices = pyupbit.get_current_price(watch_list) if watch_list else {}
     if not isinstance(current_prices, dict): 
@@ -752,7 +765,8 @@ def run_scalp_engine(now):
     scalp_pos_items = {k: v for k, v in bot_positions.items() if v['engine'] == 'SCALP'}
     active_tickers = {} 
     
-    watch_list = list(set([pos['ticker'] for pos in scalp_pos_items.values()] + top_grid_candidates))
+    raw_watch_list = list(set([pos['ticker'] for pos in scalp_pos_items.values()] + top_grid_candidates))
+    watch_list = [t for t in raw_watch_list if isinstance(t, str) and t.startswith("KRW-")]
     current_prices = pyupbit.get_current_price(watch_list) if watch_list else {}
     if not isinstance(current_prices, dict): current_prices = {}
 
@@ -909,7 +923,8 @@ def run_classic_grid_engine(now):
     cg_pos_items = {k: v for k, v in bot_positions.items() if v['engine'] == ENGINE_NAME}
     active_tickers = {}
     
-    watch_list = list(set([pos['ticker'] for pos in cg_pos_items.values()] + top_grid_candidates))
+    raw_watch_list = list(set([pos['ticker'] for pos in cg_pos_items.values()] + top_grid_candidates))
+    watch_list = [t for t in raw_watch_list if isinstance(t, str) and t.startswith("KRW-")]
     current_prices = pyupbit.get_current_price(watch_list) if watch_list else {}
     if not isinstance(current_prices, dict): current_prices = {}
 
