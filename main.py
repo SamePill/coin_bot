@@ -1,5 +1,6 @@
 import os
 import time
+import random
 import threading
 import traceback  
 from datetime import datetime, timedelta
@@ -73,8 +74,9 @@ def _safe_get_current_price(ticker, limit_info=False, verbose=False):
             elif "string indices must be integers" in err_msg or err_msg == "0" or "list index" in err_msg or "JSONDecodeError" in err_msg:
                 # 💡 어떤 종목 조회 중 차단되었는지 로그 출력 추가
                 ticker_str = str(ticker)[:50] + "..." if len(str(ticker)) > 50 else str(ticker)
-                print(f"⚠️ [API 차단 방어] 업비트 WAF 차단 응답 감지 (대상: {ticker_str}). 3초 대기... ({i+1}/{retries})")
-                time.sleep(3)
+                wait_time = 3 + random.uniform(0.5, 2.5) # 💡 [다중 컨테이너 재시도 충돌 방지] 랜덤 지연(Jitter)
+                print(f"⚠️ [API 차단 방어] 업비트 WAF 차단 응답 감지 (대상: {ticker_str}). {wait_time:.1f}초 대기... ({i+1}/{retries})")
+                time.sleep(wait_time)
             else:
                 print(f"⚠️ [네트워크 에러] 시세 조회 지연 - 사유: {err_msg[:50]}... ({i+1}/{retries})")
                 time.sleep(1)
