@@ -29,7 +29,7 @@ def execute_buy(ticker, amount, slot_index=1):
 
         # 3. 업비트 실제 시장가 매수 주문
         res = upbit.buy_market_order(ticker, amount)
-        if res:
+        if isinstance(res, dict) and 'uuid' in res:
             # 체결 후 잔고 반영을 위한 짧은 대기
             time.sleep(1) 
             curr_p = pyupbit.get_current_price(ticker)
@@ -56,6 +56,12 @@ def execute_buy(ticker, amount, slot_index=1):
                         f"- 슬롯: {slot_index}번"
                     )
                 return True, curr_p, vol  # 💡 수정: 매수 성공 여부와 함께 단가, 수량 반환
+            
+        else:
+            # 💡 [버그 수정] 매수 실패 시 (상폐 코인, 잔고 부족 등) 에러를 성공으로 착각하는 문제 방지
+            err_msg = res.get('error', {}).get('message', str(res)) if isinstance(res, dict) else "응답 에러"
+            print(f"⚠️ [{ENGINE_TYPE}] 매수 주문 거부 ({ticker}): {err_msg}")
+            return False, 0, 0
             
     except Exception as e:
         print(f"❌ [{ENGINE_TYPE}] 매수 실행 오류 ({ticker}): {e}")
