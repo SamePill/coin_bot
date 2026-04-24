@@ -201,10 +201,15 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 # 💡 [좀비 방지] 수량을 0으로 두지 않고 장부에서 레코드 자체를 완전 삭제!
                 db_manager.delete_position(target_engine, ticker, slot_index)
-                db_manager.log_trade(ticker, "SELL_FORCE_RESET", curr_p_after, sell_vol, profit_rate, realized_krw)
+                db_manager.log_trade(target_engine, ticker, "SELL_FORCE_RESET", curr_p_after, sell_vol, profit_rate, realized_krw)
 
                 reset_count += 1
                 total_realized += realized_krw
+
+        else:
+            # 💡 [버그 수정] 실제 지갑 잔고가 0이더라도 DB 장부의 유령 데이터를 지워 슬롯 점유를 해제합니다.
+            db_manager.delete_position(target_engine, ticker, slot_index)
+            reset_count += 1
 
     # 만약 타겟 엔진이 텔레그램을 돌리고 있는 본인(예: GRID)이라면, 자신의 램(RAM)도 비워줌
     if _bot_positions_lock:

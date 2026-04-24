@@ -1,6 +1,5 @@
 import os
 import time
-import random
 import threading
 import traceback  
 from datetime import datetime, timedelta
@@ -35,6 +34,7 @@ ACTIVE_ENGINES = [e.strip().upper() for e in ENABLED_ENGINES_STR.split(',') if e
 
 active_count = len(ACTIVE_ENGINES) if len(ACTIVE_ENGINES) > 0 else 1
 regime_interval = max(1, 15 // active_count) # 15분 주기를 활성 엔진 수로 나눔 (예: 3개면 5분 간격)
+# 💡 [동적 분산] 단일 컨테이너 통합 실행으로 변경되어 딜레이/오프셋 로직 제거
 
 startup_delays, regime_offsets = {}, {}
 for i, engine in enumerate(ACTIVE_ENGINES):
@@ -50,16 +50,6 @@ if delay_sec > 0:
 _original_get_current_price = pyupbit.get_current_price
 
 def _safe_get_current_price(ticker, limit_info=False, verbose=False):
-    # 💡 [추가] 리스트가 100개를 초과하면 분할해서 조회 (업비트 제한 및 WAF URL 길이 차단 방어)
-    if isinstance(ticker, list) and len(ticker) > 100:
-        result = {}
-        for idx in range(0, len(ticker), 100):
-            chunk = ticker[idx:idx+100]
-            chunk_res = _safe_get_current_price(chunk, limit_info, verbose)
-            if isinstance(chunk_res, dict):
-                result.update(chunk_res)
-        return result
-
     retries = 3
     for i in range(retries):
         try:
@@ -71,12 +61,9 @@ def _safe_get_current_price(ticker, limit_info=False, verbose=False):
             if "Too Many Requests" in err_msg or "429" in err_msg:
                 print(f"⚠️ [API 과부하] 호출 제한 도달. 2초 대기 후 재시도... ({i+1}/{retries})")
                 time.sleep(2) # 숨 고르기
-            elif "string indices must be integers" in err_msg or err_msg == "0" or "list index" in err_msg or "JSONDecodeError" in err_msg:
-                # 💡 어떤 종목 조회 중 차단되었는지 로그 출력 추가
-                ticker_str = str(ticker)[:50] + "..." if len(str(ticker)) > 50 else str(ticker)
-                wait_time = 3 + random.uniform(0.5, 2.5) # 💡 [다중 컨테이너 재시도 충돌 방지] 랜덤 지연(Jitter)
-                print(f"⚠️ [API 차단 방어] 업비트 WAF 차단 응답 감지 (대상: {ticker_str}). {wait_time:.1f}초 대기... ({i+1}/{retries})")
-                time.sleep(wait_time)
+            elif "string indices must be integers" in err_msg or err_msg == "0" or "list index" in err_msg:
+                print(f"⚠️ [API 차단 방어] 업비트 방화벽(WAF) 차단 응답 감지. 3초 대기... ({i+1}/{retries})")
+                time.sleep(3)
             else:
                 print(f"⚠️ [네트워크 에러] 시세 조회 지연 - 사유: {err_msg[:50]}... ({i+1}/{retries})")
                 time.sleep(1)
@@ -183,46 +170,33 @@ next_day_core_targets, next_day_hunter_targets = {}, {}
 last_target_fetch_time = None
 budget_lock_notified = {'SCALP': False, 'GRID': False, 'CLASSIC_GRID': False}
 last_panic_check_time = datetime.now() + timedelta(seconds=delay_sec) # 💡 [분산] 10초 주기 체크를 컨테이너별로 오프셋 적용
+last_panic_check_time = datetime.now()
 is_panic_state = False
 last_regime_check_time = None
 
 # 💡 [API 몰림 방지] 활성 엔진 순서에 맞춰 최초 그리드 스캔 시간을 15분 간격으로 동적 분산
 idx = ACTIVE_ENGINES.index(ENGINE_TYPE) if ENGINE_TYPE in ACTIVE_ENGINES else 0
 last_grid_eval_time = datetime.now() - timedelta(hours=5, minutes=60 - (idx * 15))
+last_grid_eval_time = datetime.now() - timedelta(hours=5, minutes=60)
 
-symbol = "🏹" if ENGINE_TYPE == 'HUNTER' else "🕸️" if ENGINE_TYPE == 'CLASSIC_GRID' else "🛡️" if ENGINE_TYPE == 'CORE' else "⚡" if ENGINE_TYPE == 'SCALP' else "🎰" if ENGINE_TYPE == 'GRID' else "🤖"
 print(f"====================================================")
-print(f"🏆 [시스템] Aegis-Elite V17.17 무결성 패치 가동 (모드: {ENGINE_TYPE})")
-if ENGINE_TYPE == 'GRID':
-    print(f"{symbol} 그리드 슬롯: {GRID_TOTAL_SLOTS} | 다중슬롯: {USE_MULTI_SLOT} (Max {MAX_SLOTS_PER_COIN})")
-    send_telegram(
-        f"[{symbol}{ENGINE_TYPE} 시동 완료 !!!]\n"
-        f"- 그리드 슬롯: {GRID_TOTAL_SLOTS} \n"
-        f"- 다중슬롯: {USE_MULTI_SLOT} (Max {MAX_SLOTS_PER_COIN}\n"
-        f"- 💰 할당 예산: {MAX_BUDGET:,.0f}원"
-    )
-elif ENGINE_TYPE == 'SCALP':
-    print(f"{symbol} Scalp 슬롯: {SCALP_TOTAL_SLOTS} | 다중슬롯: {SCALP_USE_MULTI_SLOT} (Max {SCALP_MAX_SLOTS_PER_COIN})")
-    send_telegram(
-        f"[{symbol}{ENGINE_TYPE} 시동 완료 !!!]\n"
-        f"- 그리드 슬롯: {SCALP_TOTAL_SLOTS} \n"
-        f"- 다중슬롯: {SCALP_USE_MULTI_SLOT} (Max {SCALP_MAX_SLOTS_PER_COIN}\n"
-        f"- 💰 할당 예산: {MAX_BUDGET:,.0f}원"
-    )
-elif ENGINE_TYPE == 'CLASSIC_GRID':
-    print(f"{symbol} ClassicGrid 슬롯: {CG_TOTAL_SLOTS} ") #| 다중슬롯: {CG_USE_MULTI_SLOT} (Max {CG_MAX_SLOTS_PER_COIN})")    
-    send_telegram(
-        f"[{symbol}{ENGINE_TYPE} 시동 완료 !!!]\n"
-        f"- 그리드 슬롯: {CG_TOTAL_SLOTS} \n"
-#        f"- 다중슬롯: {CG_USE_MULTI_SLOT} (Max {CG_MAX_SLOTS_PER_COIN}\n"
-        f"- 💰 할당 예산: {MAX_BUDGET:,.0f}원"
-    )
-else:
-    print(f"{symbol} 타겟 슬롯: {TARGET_SLOTS}")
-    send_telegram(
-        f"[{symbol}{ENGINE_TYPE} 시동 완료 !!!]\n"
-        f"- 💰 할당 예산: {MAX_BUDGET:,.0f}원"
-    )
+print(f"🏆 [시스템] Aegis-Elite V17.18 통합 엔진 패치 가동 (활성: {', '.join(ACTIVE_ENGINES)})")
+for engine in ACTIVE_ENGINES:
+    symbol = "🏹" if engine == 'HUNTER' else "�️" if engine == 'CLASSIC_GRID' else "🛡️" if engine == 'CORE' else "⚡" if engine == 'SCALP' else "🎰" if engine == 'GRID' else "🤖"
+    if engine == 'GRID':
+        print(f"{symbol} GRID 슬롯: {GRID_TOTAL_SLOTS} | 다중슬롯: {USE_MULTI_SLOT} (Max {MAX_SLOTS_PER_COIN})")
+    elif engine == 'SCALP':
+        print(f"{symbol} SCALP 슬롯: {SCALP_TOTAL_SLOTS} | 다중슬롯: {SCALP_USE_MULTI_SLOT} (Max {SCALP_MAX_SLOTS_PER_COIN})")
+    elif engine == 'CLASSIC_GRID':
+        print(f"{symbol} CLASSIC_GRID 슬롯: {CG_TOTAL_SLOTS} ")
+    else:
+        print(f"{symbol} {engine} 타겟 슬롯: {TARGET_SLOTS}")
+
+send_telegram(
+    f"🚀 [통합 엔진 시동 완료]\n"
+    f"- 활성: {', '.join(ACTIVE_ENGINES)}\n"
+    f"- 💰 할당 예산: {MAX_BUDGET:,.0f}원"
+)
 print(f"💰 할당 예산: {MAX_BUDGET:,.0f}원")
 print(f"====================================================\n")
 
@@ -331,8 +305,8 @@ def evaluate_grid_candidates():
             
         sorted_scores = sorted(scores, key=lambda x: x['score'], reverse=True)
         top_grid_candidates = [item['ticker'] for item in sorted_scores[:GRID_TOTAL_SLOTS]]
-        # 💡 [수정] 메신저 중복 발송 방지 (GRID 봇만 대표로 알림 전송)
-        if ENGINE_TYPE == 'GRID':
+        # 💡 [수정] 통합 환경에 맞게 특정 엔진 구동 여부에 따라 발송
+        if 'GRID' in ACTIVE_ENGINES:
             msg = f"🔍 [그리드 레이더] 신규 타겟 선정 완료\n- 후보: {', '.join(top_grid_candidates[:5])}..."
             send_telegram(msg)
     except Exception as e:
@@ -342,7 +316,7 @@ def evaluate_grid_candidates():
 # -------------------------------------------------------------
 # 🛡️ 엔진 1: 코어 (CORE) - 돌파/추세 추종 매매
 # -------------------------------------------------------------
-def run_core_engine(now):
+def run_core_engine(now, safe_balances, is_panic_state):
     global bot_positions, core_targets, current_regime
     
     core_pos_items = {k: v for k, v in bot_positions.items() if v['engine'] == 'CORE'}
@@ -350,9 +324,6 @@ def run_core_engine(now):
     
     current_prices = pyupbit.get_current_price(watch_list) if watch_list else {}
     if not isinstance(current_prices, dict): current_prices = {}
-
-    balances = upbit.get_balances()
-    safe_balances = {b['currency']: float(b['balance']) for b in balances} if isinstance(balances, list) else {}
 
     # [1] 기존 포지션 관리 (매도)
     for key, pos in list(core_pos_items.items()):
@@ -374,7 +345,7 @@ def run_core_engine(now):
         if profit_rate >= 0.05:
             realized_krw = (curr_p - pos['buy']) * sell_vol
             print(f"📈 [CORE 수익 실현] {ticker} 목표가 도달! 전량 익절")
-            if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw):
+            if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw, engine_name='CORE'):
                 del bot_positions[key]
             continue
             
@@ -383,13 +354,13 @@ def run_core_engine(now):
         if curr_p < chandelier_exit_price:
             realized_krw = (curr_p - pos['buy']) * sell_vol
             print(f"🛑 [CORE 샹들리에 청산] {ticker} 추세 꺾임 감지. ({profit_rate*100:+.2f}%)")
-            if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw):
+            if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw, engine_name='CORE'):
                 del bot_positions[key]
             continue
 
     # [2] 신규 진입 (매수)
     current_core_count = len([p for p in bot_positions.values() if p['engine'] == 'CORE'])
-    if current_core_count < TARGET_SLOTS and current_regime not in ["ICE_AGE"]:
+    if current_core_count < TARGET_SLOTS and current_regime not in ["ICE_AGE"] and not is_panic_state:
         # CORE에 할당된 예산 계산
         base_invest = (MAX_BUDGET / TOTAL_SLOTS) * REGIME_SETTINGS.get(current_regime, {}).get('ratio', 1.0)
         already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in core_pos_items.values())
@@ -415,7 +386,7 @@ def run_core_engine(now):
                     while new_slot_idx in [p['slot_index'] for p in bot_positions.values() if p['ticker'] == ticker]: new_slot_idx += 1
                     
                     print(f"🚀 [CORE 신규 진입] {ticker} 강력한 추세 돌파 포착!")
-                    success, exec_price, exec_vol = worker.execute_buy(ticker, base_invest, new_slot_idx)
+                    success, exec_price, exec_vol = worker.execute_buy(ticker, base_invest, new_slot_idx, engine_name='CORE')
                     if success:
                         key = f"{ticker}_slot_{new_slot_idx}"
                         bot_positions[key] = {
@@ -424,7 +395,7 @@ def run_core_engine(now):
                             'engine': 'CORE', 'buy_level': 1, 'created_at': now,
                             'invested_amount': exec_price * exec_vol
                         }
-                        try: db_manager.update_position_state(key, exec_price, exec_vol, 1)
+                        try: db_manager.update_position_state(key, exec_price, exec_vol, 1, engine_name='CORE')
                         except AttributeError: pass
                         current_core_count += 1
                         already_used += (exec_price * exec_vol)
@@ -433,7 +404,7 @@ def run_core_engine(now):
 # -------------------------------------------------------------
 # 🏹 엔진 2: 헌터 (HUNTER) - 낙폭 과대 반등 매매
 # -------------------------------------------------------------
-def run_hunter_engine(now):
+def run_hunter_engine(now, safe_balances, is_panic_state):
     global bot_positions, hunter_targets, current_regime
     
     hunter_pos_items = {k: v for k, v in bot_positions.items() if v['engine'] == 'HUNTER'}
@@ -441,9 +412,6 @@ def run_hunter_engine(now):
     
     current_prices = pyupbit.get_current_price(watch_list) if watch_list else {}
     if not isinstance(current_prices, dict): current_prices = {}
-
-    balances = upbit.get_balances()
-    safe_balances = {b['currency']: float(b['balance']) for b in balances} if isinstance(balances, list) else {}
 
     # [1] 기존 포지션 관리 (매도)
     for key, pos in list(hunter_pos_items.items()):
@@ -462,7 +430,7 @@ def run_hunter_engine(now):
         if profit_rate >= 0.03:
             realized_krw = (curr_p - pos['buy']) * sell_vol
             print(f"🎯 [HUNTER 익절] {ticker} 낙폭과대 반등 목표가 달성!")
-            if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw):
+            if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw, engine_name='HUNTER'):
                 del bot_positions[key]
             continue
 
@@ -474,13 +442,13 @@ def run_hunter_engine(now):
             realized_krw = (curr_p - pos['buy']) * sell_vol
             reason = "구조적 저점 이탈" if curr_p < struct_stop else "반등 지연(타임아웃)"
             print(f"🛑 [HUNTER 손절] {ticker} {reason}. ({profit_rate*100:+.2f}%)")
-            if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw):
+            if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw, engine_name='HUNTER'):
                 del bot_positions[key]
             continue
 
     # [2] 신규 진입 (매수)
     current_hunter_count = len([p for p in bot_positions.values() if p['engine'] == 'HUNTER'])
-    if current_hunter_count < TARGET_SLOTS and current_regime not in ["ICE_AGE"]:
+    if current_hunter_count < TARGET_SLOTS and current_regime not in ["ICE_AGE"] and not is_panic_state:
         base_invest = (MAX_BUDGET / TOTAL_SLOTS) * REGIME_SETTINGS.get(current_regime, {}).get('ratio', 1.0)
         already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in hunter_pos_items.values())
         krw_balance = safe_balances.get('KRW', 0.0)
@@ -506,7 +474,7 @@ def run_hunter_engine(now):
                 while new_slot_idx in [p['slot_index'] for p in bot_positions.values() if p['ticker'] == ticker]: new_slot_idx += 1
                 
                 print(f"🏹 [HUNTER 신규 진입] {ticker} 과매도 반등(핀바) 포착!")
-                success, exec_price, exec_vol = worker.execute_buy(ticker, base_invest, new_slot_idx)
+                success, exec_price, exec_vol = worker.execute_buy(ticker, base_invest, new_slot_idx, engine_name='HUNTER')
                 if success:
                     key = f"{ticker}_slot_{new_slot_idx}"
                     bot_positions[key] = {
@@ -515,7 +483,7 @@ def run_hunter_engine(now):
                         'created_at': now, 'struct_stop': analyzer.get_structural_stop(ticker),
                         'invested_amount': exec_price * exec_vol
                     }
-                    try: db_manager.update_position_state(key, exec_price, exec_vol, 1)
+                    try: db_manager.update_position_state(key, exec_price, exec_vol, 1, engine_name='HUNTER')
                     except AttributeError: pass
                     current_hunter_count += 1
                     already_used += (exec_price * exec_vol)
@@ -524,18 +492,18 @@ def run_hunter_engine(now):
 # -------------------------------------------------------------
 # 🕸️ 엔진 3: 스마트 그리드 (GRID) 동적 로직
 # -------------------------------------------------------------
-def run_grid_engine(now):
+def run_grid_engine(now, safe_balances, is_panic_state):
     global bot_positions, top_grid_candidates
     
     grid_pos_items = {k: v for k, v in bot_positions.items() if v['engine'] == 'GRID'}
     active_tickers = {} 
     
-    raw_watch_list = list(set([pos['ticker'] for pos in grid_pos_items.values()] + top_grid_candidates))
-    watch_list = [t for t in raw_watch_list if isinstance(t, str) and t.startswith("KRW-")]
+    watch_list = list(set([pos['ticker'] for pos in grid_pos_items.values()] + top_grid_candidates))
     
     current_prices = pyupbit.get_current_price(watch_list) if watch_list else {}
     if not isinstance(current_prices, dict): 
         current_prices = {} # None이나 float으로 올 경우를 완벽 차단
+    krw_balance = safe_balances.get('KRW', 0.0)
 
 
     # [1] 기존 슬롯 관리 (매매 및 교체)
@@ -561,7 +529,7 @@ def run_grid_engine(now):
         last_update = pos.get('created_at', datetime.now())
         if datetime.now() - last_update > timedelta(days=7) and profit_rate < 0.01:
             print(f"⏳ [타임 컷] {ticker} 슬롯 {pos['slot_index']} 장기 체류로 인한 강제 회수")
-            if worker.execute_sell(ticker, pos['vol'], pos['slot_index'], profit_rate*100, 0):
+            if worker.execute_sell(ticker, pos['vol'], pos['slot_index'], profit_rate*100, 0, engine_name='GRID'):
                 send_telegram(f"✂️ [Time Cut] {ticker} 기회비용 확보를 위해 포지션 종료")
                 del bot_positions[key]
                 continue
@@ -570,7 +538,7 @@ def run_grid_engine(now):
         if ticker not in top_grid_candidates and profit_rate > 0.01:
             # 💡 [수정] DB에 기록될 실제 원화(KRW) 실현 수익 계산
             realized_krw = (curr_p - pos['buy']) * pos['vol']
-            if worker.execute_sell(ticker, pos['vol'], pos['slot_index'], profit_rate*100, realized_krw):
+            if worker.execute_sell(ticker, pos['vol'], pos['slot_index'], profit_rate*100, realized_krw, engine_name='GRID'):
                 print(f"⚖️ [슬롯 교체] {ticker} (수익권 방출 후 새 종목 대기)")
                 del bot_positions[key]
                 continue
@@ -584,7 +552,7 @@ def run_grid_engine(now):
             if 0.015 < profit_rate < 0.03 and pos.get('buy_level', 1) == 1:
                 print(f"🔥 [불타기] {ticker} 추세 돌파 감지! 비중 확대")
                 # 기존 유닛 사이즈의 1.5배를 추가 매수
-                success, exec_p, exec_v = worker.execute_buy(ticker, UNIT_LIST[0] * 1.5, pos['slot_index'])
+                success, exec_p, exec_v = worker.execute_buy(ticker, UNIT_LIST[0] * 1.5, pos['slot_index'], engine_name='GRID')
                 if success:
                     # 불타기 성공 시 평단가와 수량 메모리 갱신
                     new_vol = pos['vol'] + exec_v
@@ -592,7 +560,7 @@ def run_grid_engine(now):
                     bot_positions[key]['buy'] = new_avg
                     bot_positions[key]['vol'] = new_vol
                     bot_positions[key]['buy_level'] = 2 # 레벨을 올려서 중복 방지
-                    db_manager.update_position_state(key, new_avg, new_vol, 2)
+                    db_manager.update_position_state(key, new_avg, new_vol, 2, engine_name='GRID')
                     continue
 
 
@@ -617,12 +585,6 @@ def run_grid_engine(now):
             base_unit = UNIT_LIST[pos['slot_index']-1] if (pos['slot_index']-1) < len(UNIT_LIST) else UNIT_LIST[-1]
             invest_amount = base_unit * weight
             
-            # 💡 [수정] API 응답 에러(None) 처리 로직 (TypeError 방지)
-            krw_balance = upbit.get_balance("KRW")
-            if krw_balance is None:
-                print(f"⚠️ [API 지연] 잔고 조회 실패. 다음 틱에 다시 시도합니다.")
-                continue
-
             # 💡 [안전장치 추가] GRID 엔진 총 사용 예산 사전 검사
             already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in grid_pos_items.values())
             if (already_used + invest_amount) > MAX_BUDGET:
@@ -643,7 +605,7 @@ def run_grid_engine(now):
             print(f"📉 [하락 방어] {ticker} {next_level}차 진입 시도 ({invest_amount:,.0f}원 / {weight}배 가중치)")
             
             # 💡 수정: 정확히 봇이 매수한 수량과 단가만 받아와 누적 적용합니다.
-            success, exec_price, exec_vol = worker.execute_buy(ticker, invest_amount, pos['slot_index'])
+            success, exec_price, exec_vol = worker.execute_buy(ticker, invest_amount, pos['slot_index'], engine_name='GRID')
             if success:
                 time.sleep(1.5) 
                 
@@ -656,7 +618,7 @@ def run_grid_engine(now):
                 bot_positions[key]['invested_amount'] = pos.get('invested_amount', 0) + (exec_price * exec_vol)
                 
                 try:
-                    db_manager.update_position_state(key, new_avg_price, new_vol, next_level)
+                    db_manager.update_position_state(key, new_avg_price, new_vol, next_level, engine_name='GRID')
                 except AttributeError:
                     print("⚠️ db_manager에 update_position_state 함수가 등록되지 않아 DB 저장이 스킵되었습니다.")
 
@@ -669,7 +631,7 @@ def run_grid_engine(now):
             realized_krw = (curr_p - pos['buy']) * pos['vol']
             print(f"📈 [수익 실현] {ticker} 목표가 도달! 전량 익절 (수익률 {profit_rate*100:.2f}%)")
             
-            if worker.execute_sell(ticker, pos['vol'], pos['slot_index'], profit_rate*100, realized_krw):
+            if worker.execute_sell(ticker, pos['vol'], pos['slot_index'], profit_rate*100, realized_krw, engine_name='GRID'):
                 print(f"🎉 {ticker} {current_level}차 진입 물량 청산 완료 (슬롯 개방)")
                 del bot_positions[key]
                 continue
@@ -682,7 +644,7 @@ def run_grid_engine(now):
             if profit_rate > 0.01 and drop_from_peak > 0.015:
                 realized_krw = (curr_p - pos['buy']) * pos['vol']
                 print(f"🛑 [익절 보존] {ticker} 고점 대비 하락으로 수익 확정 ({profit_rate*100:+.2f}%)")
-                if worker.execute_sell(ticker, pos['vol'], pos['slot_index'], profit_rate*100, realized_krw):
+                if worker.execute_sell(ticker, pos['vol'], pos['slot_index'], profit_rate*100, realized_krw, engine_name='GRID'):
                     del bot_positions[key]
                     continue
 
@@ -691,7 +653,7 @@ def run_grid_engine(now):
     total_active_slots = sum(active_tickers.values())
     remaining_slots = GRID_TOTAL_SLOTS - total_active_slots
     
-    if remaining_slots > 0 and current_regime != "ICE_AGE":
+    if remaining_slots > 0 and current_regime != "ICE_AGE" and not is_panic_state:
         for ticker in top_grid_candidates:
             if remaining_slots <= 0: break
             
@@ -721,7 +683,7 @@ def run_grid_engine(now):
                 if not curr_p_new: continue
 
                 # 💡 수정: 신규 진입 시 봇이 매수한 단가와 수량만 장부에 기록합니다.
-                success, exec_price, exec_vol = worker.execute_buy(ticker, unit_size, new_slot_idx)
+                success, exec_price, exec_vol = worker.execute_buy(ticker, unit_size, new_slot_idx, engine_name='GRID')
                 if success:
                     time.sleep(1.5) 
                     
@@ -737,7 +699,7 @@ def run_grid_engine(now):
                     }
                     
                     try:
-                        db_manager.update_position_state(key, exec_price, exec_vol, 1)
+                        db_manager.update_position_state(key, exec_price, exec_vol, 1, engine_name='GRID')
                     except AttributeError:
                         pass
 
@@ -750,7 +712,7 @@ def run_grid_engine(now):
 # -------------------------------------------------------------
 # ⚡ 엔진 4: 스캘핑 (SCALP) - 고회전 짤짤이 로직 (완전 독립형 설정 적용)
 # -------------------------------------------------------------
-def run_scalp_engine(now):
+def run_scalp_engine(now, safe_balances, is_panic_state):
 #    global bot_positions, top_grid_candidates, GRID_TOTAL_SLOTS, USE_MULTI_SLOT, MAX_SLOTS_PER_COIN, UNIT_LIST
     
     # 💡 [신규] SCALP 전용 환경변수 로드 (값이 없으면 GRID 설정을 기본값으로 사용합니다)
@@ -767,14 +729,9 @@ def run_scalp_engine(now):
     scalp_pos_items = {k: v for k, v in bot_positions.items() if v['engine'] == 'SCALP'}
     active_tickers = {} 
     
-    raw_watch_list = list(set([pos['ticker'] for pos in scalp_pos_items.values()] + top_grid_candidates))
-    watch_list = [t for t in raw_watch_list if isinstance(t, str) and t.startswith("KRW-")]
+    watch_list = list(set([pos['ticker'] for pos in scalp_pos_items.values()] + top_grid_candidates))
     current_prices = pyupbit.get_current_price(watch_list) if watch_list else {}
     if not isinstance(current_prices, dict): current_prices = {}
-
-    # 💡 [안전장치 1] 루프 시작 시 업비트 전체 잔고를 한 번만 가져와 API 호출을 아끼며 캐싱합니다.
-    balances = upbit.get_balances()
-    safe_balances = {b['currency']: float(b['balance']) for b in balances} if isinstance(balances, list) else {}
 
     # [1] 기존 슬롯 관리 (매매 및 교체)
     for key, pos in list(scalp_pos_items.items()):
@@ -802,7 +759,7 @@ def run_scalp_engine(now):
             realized_krw = (curr_p - pos['buy']) * sell_vol
             print(f"⚡ [스캘핑 익절] {ticker} 단기 수익 달성! ({profit_rate*100:+.2f}%)")
             
-            if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw):
+            if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw, engine_name='SCALP'):
                 del bot_positions[key]
             continue
 
@@ -823,7 +780,7 @@ def run_scalp_engine(now):
                 budget_lock_notified['SCALP'] = False
 
                 print(f"📉 [스캘핑 방어] {ticker} {next_level}차 진입 시도 (가볍게 1배수 투입)")
-                success, exec_price, exec_vol = worker.execute_buy(ticker, base_unit, pos['slot_index'])
+                success, exec_price, exec_vol = worker.execute_buy(ticker, base_unit, pos['slot_index'], engine_name='SCALP')
                 if success:
                     time.sleep(1.5) 
                     new_vol = pos['vol'] + exec_vol
@@ -835,7 +792,7 @@ def run_scalp_engine(now):
                     bot_positions[key]['invested_amount'] = pos.get('invested_amount', 0) + (exec_price * exec_vol)
                     
                     try:
-                        db_manager.update_position_state(key, new_avg_price, new_vol, next_level)
+                        db_manager.update_position_state(key, new_avg_price, new_vol, next_level, engine_name='SCALP')
                     except AttributeError: pass
             else:
                 if (already_used + base_unit) > MAX_BUDGET:
@@ -852,7 +809,7 @@ def run_scalp_engine(now):
     
     already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in scalp_pos_items.values())
     
-    if remaining_slots > 0 and current_regime not in ["ICE_AGE", "CAUTION"]:
+    if remaining_slots > 0 and current_regime not in ["ICE_AGE", "CAUTION"] and not is_panic_state:
         for ticker in top_grid_candidates:
             if remaining_slots <= 0: break
             
@@ -884,7 +841,7 @@ def run_scalp_engine(now):
                 new_slot_idx = 1
                 while new_slot_idx in existing_slots: new_slot_idx += 1
                 
-                success, exec_price, exec_vol = worker.execute_buy(ticker, unit_size, new_slot_idx)
+                success, exec_price, exec_vol = worker.execute_buy(ticker, unit_size, new_slot_idx, engine_name='SCALP')
                 if success:
                     time.sleep(1.5) 
                     key = f"{ticker}_slot_{new_slot_idx}"
@@ -894,7 +851,7 @@ def run_scalp_engine(now):
                         'invested_amount': exec_price * exec_vol
                     }
                     try:
-                        db_manager.update_position_state(key, exec_price, exec_vol, 1)
+                        db_manager.update_position_state(key, exec_price, exec_vol, 1, engine_name='SCALP')
                     except AttributeError: pass
                     remaining_slots -= 1
                     active_tickers[ticker] = active_tickers.get(ticker, 0) + 1
@@ -905,7 +862,7 @@ def run_scalp_engine(now):
 # -------------------------------------------------------------
 # ⚡ 엔진 5: Classic Grid
 # -------------------------------------------------------------
-def run_classic_grid_engine(now):
+def run_classic_grid_engine(now, safe_balances, is_panic_state):
     """
     🕸️ ASIS 완벽 복원판: 클래식 거미줄 그리드 (NOW 버전 연동 완료)
     - 다중 슬롯 배제 (1종목 1슬롯 원칙)
@@ -925,13 +882,10 @@ def run_classic_grid_engine(now):
     cg_pos_items = {k: v for k, v in bot_positions.items() if v['engine'] == ENGINE_NAME}
     active_tickers = {}
     
-    raw_watch_list = list(set([pos['ticker'] for pos in cg_pos_items.values()] + top_grid_candidates))
-    watch_list = [t for t in raw_watch_list if isinstance(t, str) and t.startswith("KRW-")]
+    watch_list = list(set([pos['ticker'] for pos in cg_pos_items.values()] + top_grid_candidates))
     current_prices = pyupbit.get_current_price(watch_list) if watch_list else {}
     if not isinstance(current_prices, dict): current_prices = {}
 
-    balances = upbit.get_balances()
-    safe_balances = {b['currency']: float(b['balance']) for b in balances} if isinstance(balances, list) else {}
     krw_balance = safe_balances.get('KRW', 0.0)
 
     # =====================================================================
@@ -960,7 +914,7 @@ def run_classic_grid_engine(now):
             if sell_vol > 0:
                 realized_krw = (curr_p - pos['buy']) * sell_vol
                 # 💡 [NOW 연동] worker.execute_sell 사용 (DB 장부 깔끔하게 삭제, 로그, 알림 자동 처리)
-                if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw):
+                if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw, engine_name='CLASSIC_GRID'):
                     print(f"⚖️ [방출] {ticker} 타겟 제외로 인한 교체 방출 ({profit_rate*100:+.2f}%)")
                     del bot_positions[key]
             continue
@@ -989,7 +943,7 @@ def run_classic_grid_engine(now):
                     realized_krw = (curr_p - pos['buy']) * pos['vol']
                     
                     # worker를 이용해 100% 매도 처리 및 DB/슬롯 완전히 비우기
-                    if worker.execute_sell(ticker, pos['vol'], pos['slot_index'], profit_rate*100, realized_krw):
+                    if worker.execute_sell(ticker, pos['vol'], pos['slot_index'], profit_rate*100, realized_krw, engine_name='CLASSIC_GRID'):
                         del bot_positions[key]
                     continue # 전량 매도했으므로 아래 부분 매도 로직은 건너뜀
 
@@ -1022,7 +976,7 @@ def run_classic_grid_engine(now):
                         print(f"🕸️ [그리드 상단] {ticker} 부분 매도 완료 (+{realized_krw:,.0f}원)")
                     
                     # 💡 [NOW 연동] 부분 매도 로그 및 DB 장부(수량/투자금) 차감 업데이트
-                    db_manager.log_trade(ticker, trade_type, curr_p_after, actual_sell_vol, profit_rate*100, realized_krw)
+                    db_manager.log_trade('CLASSIC_GRID', ticker, trade_type, curr_p_after, actual_sell_vol, profit_rate*100, realized_krw)
                     import pymysql
                     from config import DB_CONF, ENABLE_TRADE_NOTI, send_telegram
                     try:
@@ -1059,7 +1013,7 @@ def run_classic_grid_engine(now):
             
             if krw_balance >= buy_krw and pos['allocated_krw'] >= buy_krw:
                 # 💡 [NOW 연동] worker.execute_buy 호출 (부분 매수 시 DB 누적 기록, 알림 발송 완벽 지원)
-                success, exec_price, exec_vol = worker.execute_buy(ticker, buy_krw, pos['slot_index'])
+                success, exec_price, exec_vol = worker.execute_buy(ticker, buy_krw, pos['slot_index'], engine_name='CLASSIC_GRID')
                 if success:
                     time.sleep(1.5)
                     new_vol = pos['vol'] + exec_vol
@@ -1083,7 +1037,7 @@ def run_classic_grid_engine(now):
     init_invest_amount = BASE_SLOT_BUDGET * 0.5
     already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in cg_pos_items.values())
     
-    if remaining_slots > 0 and current_regime not in ["ICE_AGE"]:
+    if remaining_slots > 0 and current_regime not in ["ICE_AGE"] and not is_panic_state:
         for ticker in top_grid_candidates:
             if remaining_slots <= 0: break
             
@@ -1113,7 +1067,7 @@ def run_classic_grid_engine(now):
             if not curr_p: continue
 
             # 💡 [NOW 연동] worker.execute_buy 사용 (신규 매수 시 DB 생성, 알림 발송 자동 처리)
-            success, exec_price, exec_vol = worker.execute_buy(ticker, init_invest_amount, new_slot_idx)
+            success, exec_price, exec_vol = worker.execute_buy(ticker, init_invest_amount, new_slot_idx, engine_name='CLASSIC_GRID')
             if success:
                 time.sleep(1.5) 
                 
@@ -1141,7 +1095,7 @@ def run_classic_grid_engine(now):
 # -------------------------------------------------------------
 # 🔄 메인 제어 루프
 # -------------------------------------------------------------
-bot_positions = db_manager.recover_bot_positions(upbit)
+bot_positions = db_manager.recover_bot_positions(upbit, ACTIVE_ENGINES)
 for k, v in bot_positions.items():
     if 'buy_level' not in v:
         v['buy_level'] = 1
@@ -1159,9 +1113,9 @@ ENABLE_TELEGRAM_COMMANDS = os.getenv('ENABLE_TELEGRAM_COMMANDS', 'False').lower(
 if ENABLE_TELEGRAM_COMMANDS:
     # 💡 도커 컴포즈에서 True로 설정된 단 하나의 엔진만 이 코드를 실행합니다.
     telegram_handler.start_telegram_listener(bot_positions, None, lambda: MAX_BUDGET)
-    print(f"🤖 [{ENGINE_TYPE}] 텔레그램 명령 수신 당번 가동 시작!")
+    print(f"🤖 [공통] 텔레그램 명령 리스너 가동 시작!")
 else:
-    print(f"🔇 [{ENGINE_TYPE}] 텔레그램 명령 수신을 스킵합니다. (중복 방지 모드)")
+    print(f"🔇 [공통] 텔레그램 명령 수신을 스킵합니다.")
 
 # 자동 일일 보고를 위한 변수
 last_daily_report_day = None
@@ -1178,7 +1132,7 @@ while True:
         now = datetime.now()
         
         # 💡 매일 아침 8시 0분에 한 번만 자동 보고서 발송
-        if ENGINE_TYPE == 'GRID' and now.hour == 8 and now.minute == 0 and last_daily_report_day != now.day:
+        if now.hour == 8 and now.minute == 0 and last_daily_report_day != now.day:
             rows = db_manager.get_today_performance(1)
             report_msg = f"🌅 [아침 브리핑] 어제 총 결산\n\n"
             if not rows:
@@ -1195,7 +1149,7 @@ while True:
 
         # 💡 [수정] 정기 보고서 발송 (8, 13, 18, 23시) - GRID에서만 보내기 (중복발송))
         report_hours = [13, 18, 23]
-        if ENGINE_TYPE == 'GRID' and now.hour in report_hours and now.minute == 0 and last_daily_report_hour != now.hour:
+        if now.hour in report_hours and now.minute == 0 and last_daily_report_hour != now.hour:
             rows = db_manager.get_today_performance(0)
             # db_manager.ACCOUNT_ID를 사용하여 어떤 계정의 보고서인지 명시합니다.
             report_msg = f"📊 [{db_manager.ACCOUNT_ID}] 정기 수익 보고 ({now.hour}시)\n\n"
@@ -1215,19 +1169,18 @@ while True:
 
         # 💡 [동적 분산] 현재 실행 중인 엔진 리스트 기반으로 계산된 offset 적용
         offset = regime_offsets.get(ENGINE_TYPE, 0)
-        if now.minute % 15 == offset and (last_regime_check_time is None or (now - last_regime_check_time).total_seconds() > 60):
+        if now.minute % 15 == 0 and (last_regime_check_time is None or (now - last_regime_check_time).total_seconds() > 60):
             current_regime = analyzer.get_market_regime(current_regime)
             last_regime_check_time = now
 
         # 💡 [추가] 4시간마다 CORE/HUNTER 타겟 스캔 (50분 언저리에 실행하여 API 몰림 방지)
         # 💡 [수정] CORE와 HUNTER 엔진일 때만 레이더 가동
-        if ENGINE_TYPE in ['CORE', 'HUNTER']:
-            fetch_minute = 50 if ENGINE_TYPE == 'CORE' else 55 # 💡 [API 분산] CORE는 50분, HUNTER는 55분
-            if now.hour % 4 == 0 and now.minute == fetch_minute and (last_target_fetch_time is None or now >= last_target_fetch_time + timedelta(hours=3)):
+        if any(e in ['CORE', 'HUNTER'] for e in ACTIVE_ENGINES):
+            if now.hour % 4 == 0 and now.minute == 50 and (last_target_fetch_time is None or now >= last_target_fetch_time + timedelta(hours=3)):
                 last_target_fetch_time = now 
                 threading.Thread(target=background_target_fetcher).start()
 
-        if ENGINE_TYPE in ['GRID', 'SCALP','CLASSIC_GRID']:
+        if any(e in ['GRID', 'SCALP', 'CLASSIC_GRID'] for e in ACTIVE_ENGINES):
             if last_grid_eval_time is None or now >= last_grid_eval_time + timedelta(hours=6):
                 evaluate_grid_candidates()
                 last_grid_eval_time = now
@@ -1238,49 +1191,36 @@ while True:
             last_panic_check_time = now
 
         if is_panic_state:
-            time.sleep(10); continue
+            print("🚨 [패닉장 감지] 모든 신규 진입이 일시 중단됩니다. (익절/손절은 정상 가동)")
 
-        # 💡 [수정] DB를 조회하여 엔진 일시 정지 상태 확인
-        if db_manager.is_engine_paused(ENGINE_TYPE):
-            
-            # 카운터가 0이거나 60의 배수일 때만(즉 1분마다) 출력
-            if pause_log_counter % 60 == 0:  
-                print(f"⏸️ [{ENGINE_TYPE}] 엔진 루프 일시 정지 중... (텔레그램 /resume 대기)")
-            
-            pause_log_counter += 1
-            
-            # 🚨 핵심: 여기는 반드시 1초로 두어야 텔레그램 명령에 즉각 반응합니다!
-            time.sleep(10) 
-            continue # 아래 엔진 로직을 스킵하고 무한 대기
+        # 💡 [핵심 최적화] 메인 루프에서 전체 잔고를 단 1번만 조회하여 모든 엔진에 공유 (API 병목 완화)
+        balances = upbit.get_balances()
+        safe_balances = {b['currency']: float(b['balance']) for b in balances} if isinstance(balances, list) else {}
         
-        # 정지가 풀려서 일반 매매로 넘어가면 카운터 초기화
-        pause_log_counter = 0
-
-        if ENGINE_TYPE == 'CORE': run_core_engine(now)
-        elif ENGINE_TYPE == 'HUNTER': run_hunter_engine(now)
-        elif ENGINE_TYPE == 'GRID': run_grid_engine(now)
-        elif ENGINE_TYPE == 'SCALP': run_scalp_engine(now)
-        elif ENGINE_TYPE == 'CLASSIC_GRID': run_classic_grid_engine(now)
+        # 💡 단일 컨테이너 통합 루프 실행
+        for engine in ACTIVE_ENGINES:
+            if db_manager.is_engine_paused(engine):
+                if pause_log_counter % 60 == 0:  
+                    print(f"⏸️ [{engine}] 엔진 루프 일시 정지 중...")
+                continue
+                
+            if engine == 'CORE': run_core_engine(now, safe_balances, is_panic_state)
+            elif engine == 'HUNTER': run_hunter_engine(now, safe_balances, is_panic_state)
+            elif engine == 'GRID': run_grid_engine(now, safe_balances, is_panic_state)
+            elif engine == 'SCALP': run_scalp_engine(now, safe_balances, is_panic_state)
+            elif engine == 'CLASSIC_GRID': run_classic_grid_engine(now, safe_balances, is_panic_state)
+            
+            time.sleep(0.5) # 엔진 간 루프 간격 (WAF 방어)
+        
+        pause_log_counter += 1
 
         # 💡 루프가 에러 없이 정상적으로 끝까지 도달하면 에러 카운터 초기화
         consecutive_errors = 0
-
-        #loop_delay = 1 if ENGINE_TYPE == 'HUNTER' else 3
-        # 💡 [수정] 엔진별 루프 대기 시간(심장 박동) 차등화로 API 병목 분산
-        if ENGINE_TYPE == 'SCALP': 
-            loop_delay = 1.5  # 0.5초 -> 1.5초 완화 (API 차단 방지)
-        elif ENGINE_TYPE == 'HUNTER': 
-            loop_delay = 2.0  # 1.5초 -> 2.0초 완화
-        elif ENGINE_TYPE == 'GRID':
-            loop_delay = 3.0  # 스윙 그물망은 3초
-        elif ENGINE_TYPE == 'CLASSIC_GRID':
-            loop_delay = 1.5  # 0.5초 -> 1.5초 완화 (API 차단 방지)
-        else: # CORE
-            loop_delay = 5.0  # 코어(추세)는 5초마다 천천히 확인해도 충분함
-        time.sleep(loop_delay)
+        # 💡 통합 엔진 루프 딜레이
+        time.sleep(3.0)
 
     except Exception as e:
-        print(f"🚨 [{ENGINE_TYPE}] 루프 에러: {e}")
+        print(f"🚨 [메인 루프] 통합 실행 중 에러 발생: {e}")
         traceback.print_exc()
         
         # 💡 [추가] 에러 발생 시 텔레그램 긴급 노티 발송 및 스팸 방지
@@ -1289,7 +1229,7 @@ while True:
         # 연속 3회까지만 텔레그램을 발송하고, 이후는 콘솔에만 기록하여 스팸을 방지합니다.
         if consecutive_errors <= 3:
             error_msg = (
-                f"🚨 [{symbol}{ENGINE_TYPE} 봇 긴급 오류]\n"
+                f"🚨 [통합 봇 긴급 오류]\n"
                 f"시스템 루프에서 에러가 발생했습니다.\n\n"
                 f"원인: {str(e)[:150]}" # 텔레그램 메시지 길이 제한 방지를 위해 150자로 자름
             )

@@ -16,14 +16,13 @@ pool = PooledDB(
 )
 
 
-# 💡 [추가/수정] 환경 변수에서 엔진 타입과 '계정 식별자(ACCOUNT_ID)' 로드
-ENGINE_TYPE = os.getenv('ENGINE_TYPE', 'WHAT?').upper()
+# 💡 [추가/수정] 환경 변수에서 '계정 식별자(ACCOUNT_ID)' 로드
 ACCOUNT_ID = os.getenv('ACCOUNT_ID', 'WHO?').upper()  # 설정 없으면 'MAIN'으로 기본 동작
 
 # -------------------------------------------------------------
 # 📊 매매 기록 (trade_logs)
 # -------------------------------------------------------------
-def log_trade(market, side, price, volume, profit_rate=0.0, realized_profit=0.0):
+def log_trade(engine_name, market, side, price, volume, profit_rate=0.0, realized_profit=0.0):
     """
     💡 매매 내역과 실현 수익금을 기록합니다. (다중 계정 격리 반영)
     """
@@ -39,7 +38,7 @@ def log_trade(market, side, price, volume, profit_rate=0.0, realized_profit=0.0)
             cur.execute(sql, (
                 ACCOUNT_ID, 
                 market, 
-                ENGINE_TYPE,
+                engine_name,
                 side, 
                 price, 
                 volume, 
@@ -48,7 +47,7 @@ def log_trade(market, side, price, volume, profit_rate=0.0, realized_profit=0.0)
             ))
         conn.commit()
     except Exception as e: 
-        print(f"❌ DB 기록 오류 ({ENGINE_TYPE} - {ACCOUNT_ID}): {e}")
+        print(f"❌ DB 기록 오류 ({engine_name} - {ACCOUNT_ID}): {e}")
     finally:
         if 'conn' in locals() and conn:
             conn.close()
@@ -107,20 +106,23 @@ def update_position(engine_name, ticker, price, volume, side, slot_index=1):
 # -------------------------------------------------------------
 # 🔄 기억 복구 로직 (recover_bot_positions)
 # -------------------------------------------------------------
-def recover_bot_positions(upbit):
+def recover_bot_positions(upbit, active_engines):
     positions = {}
     conn = None
     try:
         # conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
         conn = pool.connection()
         with conn.cursor(pymysql.cursors.DictCursor) as cur:
-            # 💡 [수정] WHERE 조건에 engine_name 추가 (타 엔진의 종목을 가져오는 버그 방지)
+            if not active_engines: return positions
+            
+            # 💡 다중 엔진 동시 복구를 위해 IN 절 사용
+            format_strings = ','.join(['%s'] * len(active_engines))
             sql = """
                 SELECT ticker, engine_name, slot_index, buy_price, volume, buy_level, invested_amount, created_at 
                 FROM current_positions 
-                WHERE account_id = %s AND engine_name = %s
+                WHERE account_id = %s AND engine_name IN ({format_strings})
             """
-            cur.execute(sql, (ACCOUNT_ID, ENGINE_TYPE))
+            cur.execute(sql, [ACCOUNT_ID] + active_engines)
             rows = cur.fetchall()
             
             for r in rows:
@@ -138,8 +140,8 @@ def recover_bot_positions(upbit):
                     'created_at': r['created_at'], # 💡 [추가] 최초 진입 시간 복구
                     'invested_amount': float(r['invested_amount'])
                 }
-        # 💡 [수정] 출력문에도 어떤 엔진의 포지션을 복구했는지 명시하도록 개선
-        print(f"🔄 [{ACCOUNT_ID} - {ENGINE_TYPE}] DB에서 {len(positions)}개의 포지션을 복구했습니다. (최초 진입일 포함)")
+        # 💡 통합 계정 기준으로 복구 내역 출력
+        print(f"🔄 [{ACCOUNT_ID}] DB에서 {len(positions)}개의 포지션을 복구했습니다. (엔진: {', '.join(active_engines)})")
     except Exception as e:
         print(f"❌ 포지션 복구 실패: {e}")
     finally:
@@ -200,7 +202,7 @@ def get_today_performance(days_ago=0):
         if 'conn' in locals() and conn:
             conn.close()
 
-def update_position_state(key, real_avg_price, real_vol, next_level):
+def update_position_state(key, real_avg_price, real_vol, next_level, engine_name):
     """물타기(피라미딩) 성공 후, 평단가와 매수 차수를 내 계정 장부에만 기록합니다."""
     parts = key.split('_slot_')
     if len(parts) != 2: return
@@ -220,7 +222,7 @@ def update_position_state(key, real_avg_price, real_vol, next_level):
                 SET buy_price = %s, volume = %s, buy_level = %s
                 WHERE account_id = %s AND engine_name = %s AND ticker = %s AND slot_index = %s
             """
-            cur.execute(sql, (real_avg_price, real_vol, next_level, ACCOUNT_ID, ENGINE_TYPE, ticker, slot_index))
+            cur.execute(sql, (real_avg_price, real_vol, next_level, ACCOUNT_ID, engine_name, ticker, slot_index))
         conn.commit()
     except Exception as e:
         print(f"❌ DB 상태 업데이트 실패 ({ticker}): {e}")
