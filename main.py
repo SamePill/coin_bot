@@ -340,7 +340,10 @@ def run_core_engine(now, safe_balances, is_panic_state):
         currency = ticker.split('-')[1]
         sell_vol = min(pos['vol'], safe_balances.get(currency, 0.0))
         if sell_vol <= 0:
-            del bot_positions[key]; continue
+            print(f"🧹 [유령 장부 청소/CORE] {ticker} 실제 잔고 없음. DB에서 삭제합니다.")
+            db_manager.delete_position('CORE', ticker, pos['slot_index'])
+            del bot_positions[key]
+            continue
 
         # 💡 [매도 1] 5% 도달 시 전량 익절 (DB 꼬임 방지)
         if profit_rate >= 0.05:
@@ -427,7 +430,10 @@ def run_hunter_engine(now, safe_balances, is_panic_state):
         currency = ticker.split('-')[1]
         sell_vol = min(pos['vol'], safe_balances.get(currency, 0.0))
         if sell_vol <= 0:
-            del bot_positions[key]; continue
+            print(f"🧹 [유령 장부 청소/HUNTER] {ticker} 실제 잔고 없음. DB에서 삭제합니다.")
+            db_manager.delete_position('HUNTER', ticker, pos['slot_index'])
+            del bot_positions[key]
+            continue
 
         # 💡 [매도 1] 익절 (반등 시 3% 수익 확정)
         if profit_rate >= 0.03:
@@ -521,6 +527,14 @@ def run_grid_engine(now, safe_balances, is_panic_state):
         active_tickers[ticker] = active_tickers.get(ticker, 0) + 1
         profit_rate = (curr_p - pos['buy']) / pos['buy']
         
+        # 💡 [유령 장부 방지] 실제 잔고 확인 후 0원이면 장부 파기
+        currency = ticker.split('-')[1]
+        if safe_balances.get(currency, 0.0) <= 0:
+            print(f"🧹 [유령 장부 청소/GRID] {ticker} 실제 잔고 없음. DB에서 삭제합니다.")
+            db_manager.delete_position('GRID', ticker, pos['slot_index'])
+            del bot_positions[key]
+            continue
+
         # -------------------------------------------------------------
         # 💡 [신규] 고점 기록 및 트레일링 스탑 준비
         # -------------------------------------------------------------
@@ -760,7 +774,8 @@ def run_scalp_engine(now, safe_balances, is_panic_state):
         # -------------------------------------------------------------
         if profit_rate >= 0.006: 
             if sell_vol <= 0:
-                print(f"⚠️ [잔고 불일치] {ticker} 매도 불가 (장부: {pos['vol']} / 실제: {actual_balance}).")
+                print(f"⚠️ [잔고 불일치] {ticker} 매도 불가 (장부: {pos['vol']} / 실제: {actual_balance}). DB 장부를 강제 삭제합니다.")
+                db_manager.delete_position('SCALP', ticker, pos['slot_index'])
                 del bot_positions[key]
                 continue
 
@@ -908,6 +923,14 @@ def run_classic_grid_engine(now, safe_balances, is_panic_state):
         active_tickers[ticker] = active_tickers.get(ticker, 0) + 1
         profit_rate = (curr_p - pos['buy']) / pos['buy']
         
+        # 💡 [유령 장부 방지] 실제 잔고 확인 후 0원이면 장부 파기
+        currency = ticker.split('-')[1]
+        if safe_balances.get(currency, 0.0) <= 0:
+            print(f"🧹 [유령 장부 청소/CLASSIC_GRID] {ticker} 실제 잔고 없음. DB에서 삭제합니다.")
+            db_manager.delete_position(ENGINE_NAME, ticker, pos['slot_index'])
+            del bot_positions[key]
+            continue
+
         # 💡 [ASIS 복원] 메모리 복구 시 필요 변수 초기화
         if 'last_grid_price' not in pos: 
             pos['last_grid_price'] = curr_p
