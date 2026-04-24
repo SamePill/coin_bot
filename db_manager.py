@@ -117,7 +117,7 @@ def recover_bot_positions(upbit, active_engines):
             
             # 💡 다중 엔진 동시 복구를 위해 IN 절 사용
             format_strings = ','.join(['%s'] * len(active_engines))
-            sql = """
+            sql = f"""
                 SELECT ticker, engine_name, slot_index, buy_price, volume, buy_level, invested_amount, created_at 
                 FROM current_positions 
                 WHERE account_id = %s AND engine_name IN ({format_strings})
