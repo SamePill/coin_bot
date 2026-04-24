@@ -30,7 +30,9 @@ CG_MAX_SLOTS_PER_COIN = int(os.getenv('CG_MAX_SLOTS_PER_COIN', 1))
 
 # 💡 [동적 분산] ENABLED_ENGINES를 읽어와 활성화된 엔진 수만큼 API 호출 시간을 균등 분배합니다.
 ENABLED_ENGINES_STR = os.getenv('ENABLED_ENGINES', 'CORE,HUNTER,GRID,SCALP,CLASSIC_GRID')
-ACTIVE_ENGINES = [e.strip().upper() for e in ENABLED_ENGINES_STR.split(',') if e.strip()]
+
+# 💡 [버그 방지] 사용자가 .env에 'CLASSIC'으로 줄여서 적은 경우 'CLASSIC_GRID'로 자동 매핑합니다.
+ACTIVE_ENGINES = ['CLASSIC_GRID' if e.strip().upper() == 'CLASSIC' else e.strip().upper() for e in ENABLED_ENGINES_STR.split(',') if e.strip()]
 
 # 💡 [V17.20] 엔진별 예산 설정 로드
 ENGINE_BUDGETS = {
