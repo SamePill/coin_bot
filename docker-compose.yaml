@@ -8,65 +8,10 @@ x-bot-common: &bot-common
     - "host.docker.internal:host-gateway" # ⭐ 핵심: 도커 안에서 호스트 DB(localhost)로 연결해주는 통로
 
 services:
-#  mariadb:
-#    image: mariadb:10.11
-#    container_name: aegis_db
-#    restart: unless-stopped
-#    ports:
-#      - "3305:3305"
-#    env_file: .env   # 💡 .env 파일의 내용을 환경 변수로 주입 
-#    environment:
-#      #MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
-#      #MYSQL_DATABASE: ${DB_NAME}
-#      MARIADB_ROOT_PASSWORD: ${DB_PASS}
-#      MARIADB_DATABASE: ${DB_NAME}
-#      MARIADB_USER: ${DB_USER}
-#      MARIADB_PASSWORD: ${DB_PASS}
-#      TZ: Asia/Seoul
-#    volumes:
-#      - ./db_data:/var/lib/mysql
-
-# 🛡️ 1. 코어 엔진 (Core Engine)
-  core-bot:
+  coin-bot:
     <<: *bot-common
-    container_name: aegis_core_${ACCOUNT_ID}
-    profiles: ["core","all"]
-#    restart: unless-stopped
-#    depends_on:
-#      - mariadb
-    env_file: .env
-    environment:
-      - ACCOUNT_ID=${ACCOUNT_ID}
-      - ENGINE_TYPE=CORE
-      - MAX_BUDGET=${CORE_MAX_BUDGET}
-      - TARGET_SLOTS=2
-      - ENABLE_TELEGRAM_COMMANDS=False
-      - TZ=Asia/Seoul
-
-  # 🏹 2. 헌터 엔진 (Hunter Engine)
-  hunter-bot:
-    <<: *bot-common
-    container_name: aegis_hunter_${ACCOUNT_ID}
-    profiles: ["hunter","all"]
-#    restart: unless-stopped
-#    depends_on:
-#      - mariadb
-    env_file: .env
-    environment:
-      - ACCOUNT_ID=${ACCOUNT_ID}
-      - ENGINE_TYPE=HUNTER
-      - MAX_BUDGET=${HUNTER_MAX_BUDGET}
-      - TARGET_SLOTS=2
-      - ENABLE_TELEGRAM_COMMANDS=False
-      - TZ=Asia/Seoul
-
-  # 📊 3. 스마트 그리드 엔진 (Smart Grid Engine)
-  # 1코인당 최소 예산: 80,000원 (권장 10만 원 이상)
-  grid-bot:
-    <<: *bot-common
-    container_name: aegis_grid_${ACCOUNT_ID}
-    profiles: ["grid","all"]
-#    restart: unless-stopped
+    container_name: aegis_bot_${ACCOUNT_ID}
+    #    restart: unless-stopped
 #    depends_on:
 #      - mariadb
     env_file: .env
@@ -76,46 +21,4 @@ services:
       - MAX_BUDGET=${GRID_MAX_BUDGET}
       - ENABLE_TELEGRAM_COMMANDS=True
       - TZ=Asia/Seoul
-
-  # 📊 4. Scalp 그리드 엔진 (Scalp Engine)
-  # 1슬롯당 최소 예산: 6,000원 / 1코인당 최소 예산: 12,000원 (권장 2~3만 원 이상)
-  aegis_scalp:
-    <<: *bot-common
-    container_name: aegis_scalp_${ACCOUNT_ID}
-    profiles: ["scalp","all"]
-    env_file: .env
-    environment:
-      - ACCOUNT_ID=${ACCOUNT_ID}
-      - ENGINE_TYPE=SCALP              # 💡 새로운 SCALP 엔진 지정
-      - MAX_BUDGET=${SCALP_MAX_BUDGET}
-      - ENABLE_TELEGRAM_COMMANDS=False # 💡 텔레그램 리스너 충돌 방지
-      - TZ=Asia/Seoul
-    network_mode: "host"
-
-  # 📊 5. Classic 그리드 엔진 (Classic Grid Engine)
-  # 1코인당 최소 예산: 80,000원 (권장 10만 원 이상)
-  classic-grid-bot:
-    <<: *bot-common
-    container_name: aegis_classic-grid_${ACCOUNT_ID}
-    profiles: ["classic","all"]
-#    restart: unless-stopped
-#    depends_on:
-#      - mariadb
-    env_file: .env
-    environment:
-      - ACCOUNT_ID=${ACCOUNT_ID}
-      - ENGINE_TYPE=CLASSIC_GRID
-      - MAX_BUDGET=${CG_MAX_BUDGET}
-      - ENABLE_TELEGRAM_COMMANDS=False
-      - TZ=Asia/Seoul
-
-  # 통합봇    
-#  aegis-bot:
-#    build: .
-#    container_name: aegis_v17_bot
-#    restart: unless-stopped
-#    depends_on:
-#      - mariadb
-#    env_file: .env   # 💡 봇 컨테이너에도 환경 변수 주입 
-#    environment:
-#      - TZ=Asia/Seoul
+    network_mode: "host"      
