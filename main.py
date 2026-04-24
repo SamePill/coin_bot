@@ -24,8 +24,9 @@ SCALP_USE_MULTI_SLOT = os.getenv('SCALP_USE_MULTI_SLOT', 'True').lower() == 'tru
 SCALP_MAX_SLOTS_PER_COIN = int(os.getenv('SCALP_MAX_SLOTS_PER_COIN', 2))
 
 CG_TOTAL_SLOTS = int(os.getenv('CG_TOTAL_SLOTS', 2))
-CG_USE_MULTI_SLOT = os.getenv('SCALP_USE_MULTI_SLOT', 'True').lower() == 'true'
-CG_MAX_SLOTS_PER_COIN = int(os.getenv('SCALP_MAX_SLOTS_PER_COIN', 2))
+# 💡 [버그 수정] 잘못 참조된 SCALP 변수명을 CG 변수명으로 수정 및 1코인 1슬롯 원칙에 맞게 기본값 변경
+CG_USE_MULTI_SLOT = os.getenv('CG_USE_MULTI_SLOT', 'False').lower() == 'true'
+CG_MAX_SLOTS_PER_COIN = int(os.getenv('CG_MAX_SLOTS_PER_COIN', 1))
 
 # 💡 [동적 분산] ENABLED_ENGINES를 읽어와 활성화된 엔진 수만큼 API 호출 시간을 균등 분배합니다.
 ENABLED_ENGINES_STR = os.getenv('ENABLED_ENGINES', 'CORE,HUNTER,GRID,SCALP,CLASSIC_GRID')
@@ -879,11 +880,9 @@ def run_classic_grid_engine(now, safe_balances, is_panic_state):
     """
     global bot_positions, top_grid_candidates, current_regime, budget_lock_notified
     
-    # 설정된 슬롯 개수 로드 (1종목 = 1슬롯으로 활용됨)
-    # CG_TOTAL_SLOTS = int(os.getenv('CG_TOTAL_SLOTS', 5))
     ENGINE_NAME = 'CLASSIC_GRID'
     
-    # 💡 [수정] CLASSIC_GRID 전용 예산을 설정된 슬롯 수로 나누어 1코인당 기본 예산 산정
+    # 💡 CLASSIC_GRID 전용 예산을 설정된 슬롯(CG_TOTAL_SLOTS) 수로 나누어 1코인당 기본 예산 산정
     cg_budget = ENGINE_BUDGETS.get('CLASSIC_GRID', 0)
     BASE_SLOT_BUDGET = cg_budget / CG_TOTAL_SLOTS if CG_TOTAL_SLOTS > 0 else cg_budget
     

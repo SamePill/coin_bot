@@ -12,7 +12,7 @@
 - **언어 및 주요 라이브러리**: Python 3, `pyupbit` (업비트 API), `pandas`, `pandas_ta_classic` (기술적 지표), `python-telegram-bot` (v20+ 비동기).
 - **데이터베이스**: MySQL (DBUtils `PooledDB`를 활용한 커넥션 풀링), 다중 계정 지원(`ACCOUNT_ID`).
 - **구동 환경 (V17.19 통합)**: **단일 도커 컨테이너** 환경. 환경 변수(`ACTIVE_ENGINES`)에 정의된 여러 엔진(예: CORE, HUNTER, GRID)을 **하나의 `main.py` 루프 안에서 순차적으로 통합 구동**합니다.
-- **예산 관리**: `.env` 파일에 `CORE_MAX_BUDGET`, `GRID_MAX_BUDGET` 등 엔진별로 최대 예산을 개별 설정합니다. `worker.py`의 `execute_buy` 함수는 이 예산을 기준으로 매수 가능 여부를 판단합니다.
+- **예산 관리**: `.env` 파일에 `CORE_MAX_BUDGET`, `GRID_MAX_BUDGET`, `CG_MAX_BUDGET` 등 엔진별로 최대 예산을 개별 설정합니다. 클래식 그리드의 최대 슬롯은 `CG_TOTAL_SLOTS`로 관리됩니다. `worker.py`의 `execute_buy` 함수는 이 예산을 기준으로 매수 가능 여부를 판단합니다.
 - **상태 공유**: 봇 정지 상태, 포지션 장부 등은 MySQL DB (`current_positions`, `engine_status`)를 통해 동기화되며, 전역 메모리(`bot_positions`)에 캐싱되어 관리됩니다.
 
 ## 2. 5대 핵심 매매 엔진 (`VALID_ENGINES`)
