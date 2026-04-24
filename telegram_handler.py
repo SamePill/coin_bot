@@ -22,6 +22,8 @@ VALID_ENGINES = ["CORE", "HUNTER", "GRID", "SCALP", "CLASSIC_GRID"]
 
 # 💡 [추가] 텔레그램 봇 내부 에러(Conflict 등)를 도커 로그에 출력하기 위한 로깅 설정
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+# 💡 [추가] httpx의 지속적인 getUpdates 폴링 로그(HTTP 200 OK) 스팸을 방지하기 위해 해당 모듈만 WARNING 레벨로 격상
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """현재 슬롯 운영 상태 및 상세 손익 보고 (/status) - 엔진별 요약판"""
