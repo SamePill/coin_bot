@@ -5,12 +5,12 @@ import db_manager
 from config import UPBIT_ACCESS, UPBIT_SECRET, send_telegram, ENABLE_TRADE_NOTI
 
 # --- [도커 환경 변수 로드] ---
-MAX_BUDGET = float(os.getenv('MAX_BUDGET', 0))
+# MAX_BUDGET = float(os.getenv('MAX_BUDGET', 0)) # 💡 [제거] 엔진별 예산 관리를 위해 전역 변수 제거
 
 # 업비트 객체 초기화
 upbit = pyupbit.Upbit(UPBIT_ACCESS, UPBIT_SECRET)
 
-def execute_buy(ticker, amount, slot_index=1, engine_name='CORE'):
+def execute_buy(ticker, amount, engine_budget, slot_index=1, engine_name='CORE'):
     """
     💡 예산 한도를 체크한 후 실제 매수를 집행하고 슬롯별로 장부에 기록합니다.
     - slot_index: 다중 슬롯 운영 시 식별 번호 (기본값 1)
@@ -19,9 +19,9 @@ def execute_buy(ticker, amount, slot_index=1, engine_name='CORE'):
         # 1. DB 장부에서 이 엔진(CORE/HUNTER/GRID)이 현재 점유 중인 총 자산 확인
         already_used = db_manager.get_engine_invested_total(engine_name)
         
-        # 2. 이번 매수 금액을 합쳤을 때 할당된 MAX_BUDGET을 초과하는지 검사
-        if already_used + amount > MAX_BUDGET:
-            print(f"⚠️ [{engine_name}] 예산 한도 초과! (현재 사용: {already_used:,.0f} / 한도: {MAX_BUDGET:,.0f})")
+        # 2. 이번 매수 금액을 합쳤을 때 해당 엔진에 할당된 예산을 초과하는지 검사
+        if already_used + amount > engine_budget:
+            print(f"⚠️ [{engine_name}] 예산 한도 초과! (현재 사용: {already_used:,.0f} / 한도: {engine_budget:,.0f})")
             print("💤 5분간 대기 후 다시 확인합니다...")
             time.sleep(300)  # ⬅️ 300초(5분) 동안 루프를 멈춤
             return False, 0, 0  # 💡 수정: 실패 시 단가, 수량 0 반환

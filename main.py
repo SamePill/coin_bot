@@ -9,8 +9,7 @@ from dotenv import load_dotenv
 
 # --- [1. 환경 변수 및 멀티 슬롯 설정 로드] ---
 load_dotenv()
-ENGINE_TYPE = os.getenv('ENGINE_TYPE', 'CORE').upper()
-MAX_BUDGET = float(os.getenv('MAX_BUDGET', 0))
+# ENGINE_TYPE = os.getenv('ENGINE_TYPE', 'CORE').upper() # 💡 [제거] 통합 엔진 모드에서는 불필요
 TARGET_SLOTS = int(os.getenv('TARGET_SLOTS', 3)) # CORE, HUNTER용 고정 슬롯
 
 # 그리드 전용 확장 설정
@@ -32,19 +31,20 @@ CG_MAX_SLOTS_PER_COIN = int(os.getenv('SCALP_MAX_SLOTS_PER_COIN', 2))
 ENABLED_ENGINES_STR = os.getenv('ENABLED_ENGINES', 'CORE,HUNTER,GRID,SCALP,CLASSIC_GRID')
 ACTIVE_ENGINES = [e.strip().upper() for e in ENABLED_ENGINES_STR.split(',') if e.strip()]
 
-active_count = len(ACTIVE_ENGINES) if len(ACTIVE_ENGINES) > 0 else 1
-regime_interval = max(1, 15 // active_count) # 15분 주기를 활성 엔진 수로 나눔 (예: 3개면 5분 간격)
-# 💡 [동적 분산] 단일 컨테이너 통합 실행으로 변경되어 딜레이/오프셋 로직 제거
+# 💡 [V17.20] 엔진별 예산 설정 로드
+ENGINE_BUDGETS = {
+    'CORE': float(os.getenv('CORE_MAX_BUDGET', 0)),
+    'HUNTER': float(os.getenv('HUNTER_MAX_BUDGET', 0)),
+    'GRID': float(os.getenv('GRID_MAX_BUDGET', 0)),
+    'SCALP': float(os.getenv('SCALP_MAX_BUDGET', 0)),
+    'CLASSIC_GRID': float(os.getenv('CG_MAX_BUDGET', 0)),
+}
+# 전체 예산은 모든 활성 엔진 예산의 합
+TOTAL_BUDGET = sum(ENGINE_BUDGETS[e] for e in ACTIVE_ENGINES if e in ENGINE_BUDGETS)
 
-startup_delays, regime_offsets = {}, {}
-for i, engine in enumerate(ACTIVE_ENGINES):
-    startup_delays[engine] = i * 4             # 시작 지연: 0초, 4초, 8초... 동적 할당
-    regime_offsets[engine] = i * regime_interval # 백그라운드 스캔: 0분, 5분, 10분... 동적 할당
 
-delay_sec = startup_delays.get(ENGINE_TYPE, 0)
-if delay_sec > 0:
-    print(f"🚦 [{ENGINE_TYPE}] API 병목 방지를 위해 {delay_sec}초 대기 후 가동합니다...")
-    time.sleep(delay_sec)
+# 💡 [제거] 다중 컨테이너용 딜레이 로직 제거
+
 
 # 💡 [V17.18] Monkey Patching (API 호출 초과 시 오토 힐링 추가)
 _original_get_current_price = pyupbit.get_current_price
@@ -169,14 +169,10 @@ last_grid_eval_time = None
 next_day_core_targets, next_day_hunter_targets = {}, {}
 last_target_fetch_time = None
 budget_lock_notified = {'SCALP': False, 'GRID': False, 'CLASSIC_GRID': False}
-last_panic_check_time = datetime.now() + timedelta(seconds=delay_sec) # 💡 [분산] 10초 주기 체크를 컨테이너별로 오프셋 적용
 last_panic_check_time = datetime.now()
 is_panic_state = False
 last_regime_check_time = None
 
-# 💡 [API 몰림 방지] 활성 엔진 순서에 맞춰 최초 그리드 스캔 시간을 15분 간격으로 동적 분산
-idx = ACTIVE_ENGINES.index(ENGINE_TYPE) if ENGINE_TYPE in ACTIVE_ENGINES else 0
-last_grid_eval_time = datetime.now() - timedelta(hours=5, minutes=60 - (idx * 15))
 last_grid_eval_time = datetime.now() - timedelta(hours=5, minutes=60)
 
 print(f"====================================================")
@@ -191,13 +187,15 @@ for engine in ACTIVE_ENGINES:
         print(f"{symbol} CLASSIC_GRID 슬롯: {CG_TOTAL_SLOTS} ")
     else:
         print(f"{symbol} {engine} 타겟 슬롯: {TARGET_SLOTS}")
+    # 💡 [추가] 엔진별 할당 예산 출력
+    print(f"  - 💰 할당 예산: {ENGINE_BUDGETS.get(engine, 0):,.0f}원")
 
 send_telegram(
     f"🚀 [통합 엔진 시동 완료]\n"
     f"- 활성: {', '.join(ACTIVE_ENGINES)}\n"
-    f"- 💰 할당 예산: {MAX_BUDGET:,.0f}원"
+    f"- 💰 총 할당 예산: {TOTAL_BUDGET:,.0f}원"
 )
-print(f"💰 할당 예산: {MAX_BUDGET:,.0f}원")
+print(f"💰 총 할당 예산: {TOTAL_BUDGET:,.0f}원")
 print(f"====================================================\n")
 
 
@@ -360,9 +358,11 @@ def run_core_engine(now, safe_balances, is_panic_state):
 
     # [2] 신규 진입 (매수)
     current_core_count = len([p for p in bot_positions.values() if p['engine'] == 'CORE'])
-    if current_core_count < TARGET_SLOTS and current_regime not in ["ICE_AGE"] and not is_panic_state:
-        # CORE에 할당된 예산 계산
-        base_invest = (MAX_BUDGET / TOTAL_SLOTS) * REGIME_SETTINGS.get(current_regime, {}).get('ratio', 1.0)
+    core_budget = ENGINE_BUDGETS.get('CORE', 0)
+    if current_core_count < TARGET_SLOTS and core_budget > 0 and current_regime not in ["ICE_AGE"] and not is_panic_state:
+        # 💡 [수정] CORE 엔진 전용 예산 및 슬롯 수에 기반하여 1회 투자금 계산
+        base_invest = (core_budget / TARGET_SLOTS) if TARGET_SLOTS > 0 else core_budget
+        base_invest *= REGIME_SETTINGS.get(current_regime, {}).get('ratio', 1.0)
         already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in core_pos_items.values())
         krw_balance = safe_balances.get('KRW', 0.0)
 
@@ -378,15 +378,15 @@ def run_core_engine(now, safe_balances, is_panic_state):
                 if analyzer.check_keltner_breakout(ticker) and analyzer.get_adx(ticker) > 25 and analyzer.check_volume_spike(ticker):
                     
                     # 💡 [안전장치] 예산 락 (Lock)
-                    if krw_balance < base_invest or (already_used + base_invest) > MAX_BUDGET:
-                        print(f"🛑 [CORE 예산 잠금] {ticker} 보류 (사용량: {already_used:,.0f} / 한도: {MAX_BUDGET:,.0f})")
+                    if krw_balance < base_invest or (already_used + base_invest) > core_budget:
+                        print(f"🛑 [CORE 예산 잠금] {ticker} 보류 (사용량: {already_used:,.0f} / 한도: {core_budget:,.0f})")
                         break
                         
                     new_slot_idx = 1
                     while new_slot_idx in [p['slot_index'] for p in bot_positions.values() if p['ticker'] == ticker]: new_slot_idx += 1
                     
                     print(f"🚀 [CORE 신규 진입] {ticker} 강력한 추세 돌파 포착!")
-                    success, exec_price, exec_vol = worker.execute_buy(ticker, base_invest, new_slot_idx, engine_name='CORE')
+                    success, exec_price, exec_vol = worker.execute_buy(ticker, base_invest, core_budget, new_slot_idx, engine_name='CORE')
                     if success:
                         key = f"{ticker}_slot_{new_slot_idx}"
                         bot_positions[key] = {
@@ -448,8 +448,11 @@ def run_hunter_engine(now, safe_balances, is_panic_state):
 
     # [2] 신규 진입 (매수)
     current_hunter_count = len([p for p in bot_positions.values() if p['engine'] == 'HUNTER'])
-    if current_hunter_count < TARGET_SLOTS and current_regime not in ["ICE_AGE"] and not is_panic_state:
-        base_invest = (MAX_BUDGET / TOTAL_SLOTS) * REGIME_SETTINGS.get(current_regime, {}).get('ratio', 1.0)
+    hunter_budget = ENGINE_BUDGETS.get('HUNTER', 0)
+    if current_hunter_count < TARGET_SLOTS and hunter_budget > 0 and current_regime not in ["ICE_AGE"] and not is_panic_state:
+        # 💡 [수정] HUNTER 엔진 전용 예산 및 슬롯 수에 기반하여 1회 투자금 계산
+        base_invest = (hunter_budget / TARGET_SLOTS) if TARGET_SLOTS > 0 else hunter_budget
+        base_invest *= REGIME_SETTINGS.get(current_regime, {}).get('ratio', 1.0)
         already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in hunter_pos_items.values())
         krw_balance = safe_balances.get('KRW', 0.0)
 
@@ -466,15 +469,15 @@ def run_hunter_engine(now, safe_balances, is_panic_state):
             if analyzer.check_hunter_dip_buy(ticker) or analyzer.is_pin_bar(ticker):
                 
                 # 💡 [안전장치] 예산 락
-                if krw_balance < base_invest or (already_used + base_invest) > MAX_BUDGET:
-                    print(f"🛑 [HUNTER 예산 잠금] {ticker} 보류 (사용량: {already_used:,.0f} / 한도: {MAX_BUDGET:,.0f})")
+                if krw_balance < base_invest or (already_used + base_invest) > hunter_budget:
+                    print(f"🛑 [HUNTER 예산 잠금] {ticker} 보류 (사용량: {already_used:,.0f} / 한도: {hunter_budget:,.0f})")
                     break
                     
                 new_slot_idx = 1
                 while new_slot_idx in [p['slot_index'] for p in bot_positions.values() if p['ticker'] == ticker]: new_slot_idx += 1
                 
                 print(f"🏹 [HUNTER 신규 진입] {ticker} 과매도 반등(핀바) 포착!")
-                success, exec_price, exec_vol = worker.execute_buy(ticker, base_invest, new_slot_idx, engine_name='HUNTER')
+                success, exec_price, exec_vol = worker.execute_buy(ticker, base_invest, hunter_budget, new_slot_idx, engine_name='HUNTER')
                 if success:
                     key = f"{ticker}_slot_{new_slot_idx}"
                     bot_positions[key] = {
@@ -552,7 +555,7 @@ def run_grid_engine(now, safe_balances, is_panic_state):
             if 0.015 < profit_rate < 0.03 and pos.get('buy_level', 1) == 1:
                 print(f"🔥 [불타기] {ticker} 추세 돌파 감지! 비중 확대")
                 # 기존 유닛 사이즈의 1.5배를 추가 매수
-                success, exec_p, exec_v = worker.execute_buy(ticker, UNIT_LIST[0] * 1.5, pos['slot_index'], engine_name='GRID')
+                success, exec_p, exec_v = worker.execute_buy(ticker, UNIT_LIST[0] * 1.5, ENGINE_BUDGETS.get('GRID', 0), pos['slot_index'], engine_name='GRID')
                 if success:
                     # 불타기 성공 시 평단가와 수량 메모리 갱신
                     new_vol = pos['vol'] + exec_v
@@ -586,11 +589,12 @@ def run_grid_engine(now, safe_balances, is_panic_state):
             invest_amount = base_unit * weight
             
             # 💡 [안전장치 추가] GRID 엔진 총 사용 예산 사전 검사
+            grid_budget = ENGINE_BUDGETS.get('GRID', 0)
             already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in grid_pos_items.values())
-            if (already_used + invest_amount) > MAX_BUDGET:
+            if (already_used + invest_amount) > grid_budget:
                 # 💡 [수정] 알림이 아직 안 나갔을 때만 단 1회 출력
                 if not budget_lock_notified.get('GRID', False):
-                    print(f"🛑 [GRID 예산 잠금] {ticker} {next_level}차 물타기 보류 (사용량: {already_used:,.0f} / 한도: {MAX_BUDGET:,.0f})")
+                    print(f"🛑 [GRID 예산 잠금] {ticker} {next_level}차 물타기 보류 (사용량: {already_used:,.0f} / 한도: {grid_budget:,.0f})")
                     budget_lock_notified['GRID'] = True
                 continue # worker로 보내지 않고 스킵 (5분 정지 방지)
 
@@ -605,7 +609,7 @@ def run_grid_engine(now, safe_balances, is_panic_state):
             print(f"📉 [하락 방어] {ticker} {next_level}차 진입 시도 ({invest_amount:,.0f}원 / {weight}배 가중치)")
             
             # 💡 수정: 정확히 봇이 매수한 수량과 단가만 받아와 누적 적용합니다.
-            success, exec_price, exec_vol = worker.execute_buy(ticker, invest_amount, pos['slot_index'], engine_name='GRID')
+            success, exec_price, exec_vol = worker.execute_buy(ticker, invest_amount, grid_budget, pos['slot_index'], engine_name='GRID')
             if success:
                 time.sleep(1.5) 
                 
@@ -652,8 +656,9 @@ def run_grid_engine(now, safe_balances, is_panic_state):
     # [2] 빈 슬롯 채우기 (다중 슬롯 및 유동적 배분)
     total_active_slots = sum(active_tickers.values())
     remaining_slots = GRID_TOTAL_SLOTS - total_active_slots
+    grid_budget = ENGINE_BUDGETS.get('GRID', 0)
     
-    if remaining_slots > 0 and current_regime != "ICE_AGE" and not is_panic_state:
+    if remaining_slots > 0 and grid_budget > 0 and current_regime != "ICE_AGE" and not is_panic_state:
         for ticker in top_grid_candidates:
             if remaining_slots <= 0: break
             
@@ -665,9 +670,9 @@ def run_grid_engine(now, safe_balances, is_panic_state):
                 
                 # 💡 [안전장치 추가] 신규 진입 시 예산 사전 검사
                 already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in grid_pos_items.values())
-                if (already_used + unit_size) > MAX_BUDGET:
+                if (already_used + unit_size) > grid_budget:
                     if not budget_lock_notified['GRID']:
-                        print(f"🛑 [GRID 예산 잠금] 신규 진입 예산 초과. 사냥 보류.")
+                        print(f"🛑 [GRID 예산 잠금] 신규 진입 예산 초과. 사냥 보류. (한도: {grid_budget:,.0f}원)")
                         budget_lock_notified['GRID'] = True
                     break # 예산이 꽉 찼으면 스캔 중단
 
@@ -683,7 +688,7 @@ def run_grid_engine(now, safe_balances, is_panic_state):
                 if not curr_p_new: continue
 
                 # 💡 수정: 신규 진입 시 봇이 매수한 단가와 수량만 장부에 기록합니다.
-                success, exec_price, exec_vol = worker.execute_buy(ticker, unit_size, new_slot_idx, engine_name='GRID')
+                success, exec_price, exec_vol = worker.execute_buy(ticker, unit_size, grid_budget, new_slot_idx, engine_name='GRID')
                 if success:
                     time.sleep(1.5) 
                     
@@ -773,14 +778,15 @@ def run_scalp_engine(now, safe_balances, is_panic_state):
             base_unit = SCALP_UNIT_LIST[pos['slot_index']-1] if (pos['slot_index']-1) < len(SCALP_UNIT_LIST) else SCALP_UNIT_LIST[-1]
             
             # 💡 [안전장치 3] SCALP 엔진이 사용 중인 총 예산 계산
+            scalp_budget = ENGINE_BUDGETS.get('SCALP', 0)
             already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in scalp_pos_items.values())
             krw_balance = safe_balances.get('KRW', 0.0)
 
-            if krw_balance >= base_unit and (already_used + base_unit) <= MAX_BUDGET:
+            if krw_balance >= base_unit and (already_used + base_unit) <= scalp_budget:
                 budget_lock_notified['SCALP'] = False
 
                 print(f"📉 [스캘핑 방어] {ticker} {next_level}차 진입 시도 (가볍게 1배수 투입)")
-                success, exec_price, exec_vol = worker.execute_buy(ticker, base_unit, pos['slot_index'], engine_name='SCALP')
+                success, exec_price, exec_vol = worker.execute_buy(ticker, base_unit, scalp_budget, pos['slot_index'], engine_name='SCALP')
                 if success:
                     time.sleep(1.5) 
                     new_vol = pos['vol'] + exec_vol
@@ -795,9 +801,9 @@ def run_scalp_engine(now, safe_balances, is_panic_state):
                         db_manager.update_position_state(key, new_avg_price, new_vol, next_level, engine_name='SCALP')
                     except AttributeError: pass
             else:
-                if (already_used + base_unit) > MAX_BUDGET:
+                if (already_used + base_unit) > scalp_budget:
                     if not budget_lock_notified['SCALP']: 
-                        print(f"🛑 [SCALP 예산 잠금] {ticker} 물타기 생략 (사용량: {already_used:,.0f} / 한도: {MAX_BUDGET:,.0f})")
+                        print(f"🛑 [SCALP 예산 잠금] {ticker} 물타기 생략 (사용량: {already_used:,.0f} / 한도: {scalp_budget:,.0f})")
                         budget_lock_notified['SCALP'] = True
             continue
 
@@ -807,9 +813,10 @@ def run_scalp_engine(now, safe_balances, is_panic_state):
     # 💡 [적용] SCALP 전용 최대 슬롯 제한
     remaining_slots = SCALP_TOTAL_SLOTS - total_active_slots
     
+    scalp_budget = ENGINE_BUDGETS.get('SCALP', 0)
     already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in scalp_pos_items.values())
     
-    if remaining_slots > 0 and current_regime not in ["ICE_AGE", "CAUTION"] and not is_panic_state:
+    if remaining_slots > 0 and scalp_budget > 0 and current_regime not in ["ICE_AGE", "CAUTION"] and not is_panic_state:
         for ticker in top_grid_candidates:
             if remaining_slots <= 0: break
             
@@ -827,10 +834,10 @@ def run_scalp_engine(now, safe_balances, is_panic_state):
                     print(f"❌ [실제 잔고 부족] {ticker} 신규 진입 불가 (필요: {unit_size:,.0f}원 / 잔고: {krw_balance:,.0f}원)")
                     break
 
-                if (already_used + unit_size) > MAX_BUDGET:
+                if (already_used + unit_size) > scalp_budget:
                     # 💡 알림이 아직 안 나갔을 때만 단 1회 출력하고 플래그 잠금
                     if not budget_lock_notified['SCALP']: 
-                        print(f"🛑 [SCALP 예산 잠금] 신규 진입 예산 초과. 사냥 보류. (매도 발생 시까지 알림 음소거)")
+                        print(f"🛑 [SCALP 예산 잠금] 신규 진입 예산 초과. 사냥 보류. (한도: {scalp_budget:,.0f}원)")
                         budget_lock_notified['SCALP'] = True
                     break
 
@@ -841,7 +848,7 @@ def run_scalp_engine(now, safe_balances, is_panic_state):
                 new_slot_idx = 1
                 while new_slot_idx in existing_slots: new_slot_idx += 1
                 
-                success, exec_price, exec_vol = worker.execute_buy(ticker, unit_size, new_slot_idx, engine_name='SCALP')
+                success, exec_price, exec_vol = worker.execute_buy(ticker, unit_size, scalp_budget, new_slot_idx, engine_name='SCALP')
                 if success:
                     time.sleep(1.5) 
                     key = f"{ticker}_slot_{new_slot_idx}"
@@ -876,8 +883,9 @@ def run_classic_grid_engine(now, safe_balances, is_panic_state):
     # CG_TOTAL_SLOTS = int(os.getenv('CG_TOTAL_SLOTS', 5))
     ENGINE_NAME = 'CLASSIC_GRID'
     
-    # 💡 [ASIS 복원] 전체 시드(MAX_BUDGET)를 설정된 슬롯 수로 나누어 1코인당 기본 예산 산정
-    BASE_SLOT_BUDGET = MAX_BUDGET / CG_TOTAL_SLOTS if CG_TOTAL_SLOTS > 0 else MAX_BUDGET
+    # 💡 [수정] CLASSIC_GRID 전용 예산을 설정된 슬롯 수로 나누어 1코인당 기본 예산 산정
+    cg_budget = ENGINE_BUDGETS.get('CLASSIC_GRID', 0)
+    BASE_SLOT_BUDGET = cg_budget / CG_TOTAL_SLOTS if CG_TOTAL_SLOTS > 0 else cg_budget
     
     cg_pos_items = {k: v for k, v in bot_positions.items() if v['engine'] == ENGINE_NAME}
     active_tickers = {}
@@ -1013,7 +1021,7 @@ def run_classic_grid_engine(now, safe_balances, is_panic_state):
             
             if krw_balance >= buy_krw and pos['allocated_krw'] >= buy_krw:
                 # 💡 [NOW 연동] worker.execute_buy 호출 (부분 매수 시 DB 누적 기록, 알림 발송 완벽 지원)
-                success, exec_price, exec_vol = worker.execute_buy(ticker, buy_krw, pos['slot_index'], engine_name='CLASSIC_GRID')
+                success, exec_price, exec_vol = worker.execute_buy(ticker, buy_krw, cg_budget, pos['slot_index'], engine_name='CLASSIC_GRID')
                 if success:
                     time.sleep(1.5)
                     new_vol = pos['vol'] + exec_vol
@@ -1037,7 +1045,7 @@ def run_classic_grid_engine(now, safe_balances, is_panic_state):
     init_invest_amount = BASE_SLOT_BUDGET * 0.5
     already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in cg_pos_items.values())
     
-    if remaining_slots > 0 and current_regime not in ["ICE_AGE"] and not is_panic_state:
+    if remaining_slots > 0 and cg_budget > 0 and current_regime not in ["ICE_AGE"] and not is_panic_state:
         for ticker in top_grid_candidates:
             if remaining_slots <= 0: break
             
@@ -1050,9 +1058,9 @@ def run_classic_grid_engine(now, safe_balances, is_panic_state):
                 break
                 
             # 💡 [예산 검사] 전체 엔진 사용량 기반 예산 잠금
-            if (already_used + init_invest_amount) > MAX_BUDGET:
+            if (already_used + init_invest_amount) > cg_budget:
                 if not budget_lock_notified.get('CLASSIC_GRID', False):
-                    print(f"🛑 [{ENGINE_NAME} 예산 잠금] 신규 진입 예산 초과.")
+                    print(f"🛑 [{ENGINE_NAME} 예산 잠금] 신규 진입 예산 초과. (한도: {cg_budget:,.0f}원)")
                     budget_lock_notified['CLASSIC_GRID'] = True
                 break 
             
@@ -1067,7 +1075,7 @@ def run_classic_grid_engine(now, safe_balances, is_panic_state):
             if not curr_p: continue
 
             # 💡 [NOW 연동] worker.execute_buy 사용 (신규 매수 시 DB 생성, 알림 발송 자동 처리)
-            success, exec_price, exec_vol = worker.execute_buy(ticker, init_invest_amount, new_slot_idx, engine_name='CLASSIC_GRID')
+            success, exec_price, exec_vol = worker.execute_buy(ticker, init_invest_amount, cg_budget, new_slot_idx, engine_name='CLASSIC_GRID')
             if success:
                 time.sleep(1.5) 
                 
@@ -1112,7 +1120,7 @@ ENABLE_TELEGRAM_COMMANDS = os.getenv('ENABLE_TELEGRAM_COMMANDS', 'False').lower(
 
 if ENABLE_TELEGRAM_COMMANDS:
     # 💡 도커 컴포즈에서 True로 설정된 단 하나의 엔진만 이 코드를 실행합니다.
-    telegram_handler.start_telegram_listener(bot_positions, None, lambda: MAX_BUDGET)
+    telegram_handler.start_telegram_listener(bot_positions, None, lambda: TOTAL_BUDGET)
     print(f"🤖 [공통] 텔레그램 명령 리스너 가동 시작!")
 else:
     print(f"🔇 [공통] 텔레그램 명령 수신을 스킵합니다.")
@@ -1167,8 +1175,7 @@ while True:
             send_telegram(report_msg)
             last_daily_report_hour = now.hour # 💡 해당 시간 발송 완료 기록
 
-        # 💡 [동적 분산] 현재 실행 중인 엔진 리스트 기반으로 계산된 offset 적용
-        offset = regime_offsets.get(ENGINE_TYPE, 0)
+        # 💡 [수정] 단일 컨테이너 환경이므로 분산 로직 제거
         if now.minute % 15 == 0 and (last_regime_check_time is None or (now - last_regime_check_time).total_seconds() > 60):
             current_regime = analyzer.get_market_regime(current_regime)
             last_regime_check_time = now

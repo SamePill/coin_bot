@@ -1,24 +1,14 @@
-# 💡 공통 설정 블록: 3개 봇에 공통으로 들어갈 설정을 미리 정의합니다.
-x-bot-common: &bot-common
-  build: .
-  restart: always          # 서버 재시작 시 봇도 자동 재시작
-  network_mode: "host"
-  env_file: .env
-  extra_hosts:
-    - "host.docker.internal:host-gateway" # ⭐ 핵심: 도커 안에서 호스트 DB(localhost)로 연결해주는 통로
+version: '3.8'
 
 services:
-  coin-bot:
-    <<: *bot-common
+  aegis_bot:
+    build: .
     container_name: aegis_bot_${ACCOUNT_ID}
-    #    restart: unless-stopped
-#    depends_on:
-#      - mariadb
+    restart: unless-stopped
     env_file: .env
-    environment:
-      - ACCOUNT_ID=${ACCOUNT_ID}
-      - ENGINE_TYPE=GRID
-      - MAX_BUDGET=${GRID_MAX_BUDGET}
-      - ENABLE_TELEGRAM_COMMANDS=True
-      - TZ=Asia/Seoul
-    network_mode: "host"      
+    volumes:
+      - .:/app
+    # DB 서비스가 docker-compose에 함께 있다면 주석 해제
+    # depends_on:
+    #   - db
+    network_mode: "host"
