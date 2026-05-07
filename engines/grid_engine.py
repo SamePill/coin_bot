@@ -28,7 +28,6 @@ class GridEngine(BaseEngine):
         current_prices = pyupbit.get_current_price(watch_list) if watch_list else {}
         if not isinstance(current_prices, dict): current_prices = {}
 
-        krw_balance = safe_balances.get('KRW', 0.0)
         # [1] 기존 슬롯 관리
         for key, pos in list(grid_pos_items.items()):
             ticker = pos['ticker']
@@ -69,6 +68,7 @@ class GridEngine(BaseEngine):
                         print(f"🔥 [불타기] {ticker} 추세 돌파 감지! 비중 확대")
                         success, exec_p, exec_v = worker.execute_buy(ticker, self.UNIT_LIST[0] * 1.5, self.MAX_BUDGET, pos['slot_index'], engine_name='GRID')
                         if success:
+                            safe_balances['KRW'] = safe_balances.get('KRW', 0.0) - (self.UNIT_LIST[0] * 1.5 * 1.0005)
                             new_vol = pos['vol'] + exec_v
                             new_avg = ((pos['buy'] * pos['vol']) + (exec_p * exec_v)) / new_vol
                             bot_positions[key]['buy'] = new_avg
@@ -97,7 +97,8 @@ class GridEngine(BaseEngine):
                             self.budget_lock_notified = True
                         continue
 
-                    if krw_balance < invest_amount:
+                    krw_balance = safe_balances.get('KRW', 0.0)
+                    if krw_balance < invest_amount * 1.0005:
                         if not self.budget_lock_notified:
                             print(f"❌ [예산 초과] {ticker} {next_level}차 진입 실패. (필요: {invest_amount:,.0f}원 / 잔고: {krw_balance:,.0f}원)")
                             self.budget_lock_notified = True
@@ -108,6 +109,7 @@ class GridEngine(BaseEngine):
                     
                     success, exec_price, exec_vol = worker.execute_buy(ticker, invest_amount, self.MAX_BUDGET, pos['slot_index'], engine_name='GRID')
                     if success:
+                        safe_balances['KRW'] = safe_balances.get('KRW', 0.0) - (invest_amount * 1.0005)
                         time.sleep(1.5) 
                         new_vol = pos['vol'] + exec_vol
                         new_avg_price = ((pos['buy'] * pos['vol']) + (exec_price * exec_vol)) / new_vol
@@ -145,6 +147,11 @@ class GridEngine(BaseEngine):
                 
                 if current_count < slot_limit:
                     unit_size = self.UNIT_LIST[current_count] if current_count < len(self.UNIT_LIST) else self.UNIT_LIST[-1]
+                    
+                    krw_balance = safe_balances.get('KRW', 0.0)
+                    if krw_balance < unit_size * 1.0005:
+                        break # 잔고가 부족하면 조용히 다음 스캔 대기
+                    
                     already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in grid_pos_items.values())
                     if (already_used + unit_size) > self.MAX_BUDGET:
                         if not self.budget_lock_notified:
@@ -159,6 +166,7 @@ class GridEngine(BaseEngine):
                     
                     success, exec_price, exec_vol = worker.execute_buy(ticker, unit_size, self.MAX_BUDGET, new_slot_idx, engine_name='GRID')
                     if success:
+                        safe_balances['KRW'] = safe_balances.get('KRW', 0.0) - (unit_size * 1.0005)
                         time.sleep(1.5) 
                         key = f"{ticker}_slot_{new_slot_idx}"
                         with self.bot_positions_lock:

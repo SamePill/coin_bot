@@ -89,11 +89,12 @@ class ScalpEngine(BaseEngine):
                 already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in scalp_pos_items.values())
                 krw_balance = safe_balances.get('KRW', 0.0)
 
-                if krw_balance >= base_unit and (already_used + base_unit) <= self.MAX_BUDGET:
+                if krw_balance >= base_unit * 1.0005 and (already_used + base_unit) <= self.MAX_BUDGET:
                     self.budget_lock_notified = False
                     print(f"📉 [스캘핑 방어] {ticker} {next_level}차 진입 시도")
                     success, exec_price, exec_vol = worker.execute_buy(ticker, base_unit, self.MAX_BUDGET, pos['slot_index'], engine_name='SCALP')
                     if success:
+                        safe_balances['KRW'] = safe_balances.get('KRW', 0.0) - (base_unit * 1.0005)
                         time.sleep(1.5)
                         new_vol = pos['vol'] + exec_vol
                         new_avg_price = ((pos['buy'] * pos['vol']) + (exec_price * exec_vol)) / new_vol
@@ -127,7 +128,7 @@ class ScalpEngine(BaseEngine):
                 if current_count < slot_limit:
                     unit_size = self.SCALP_UNIT_LIST[current_count] if current_count < len(self.SCALP_UNIT_LIST) else self.SCALP_UNIT_LIST[-1]
                     krw_balance = safe_balances.get('KRW', 0.0)
-                    if krw_balance < unit_size:
+                    if krw_balance < unit_size * 1.0005:
                         print(f"❌ [실제 잔고 부족] {ticker} 신규 진입 불가 (필요: {unit_size:,.0f}원 / 잔고: {krw_balance:,.0f}원)")
                         break
 
@@ -144,6 +145,7 @@ class ScalpEngine(BaseEngine):
 
                     success, exec_price, exec_vol = worker.execute_buy(ticker, unit_size, self.MAX_BUDGET, new_slot_idx, engine_name='SCALP')
                     if success:
+                        safe_balances['KRW'] = safe_balances.get('KRW', 0.0) - (unit_size * 1.0005)
                         time.sleep(1.5) 
                         key = f"{ticker}_slot_{new_slot_idx}"
                         with self.bot_positions_lock:

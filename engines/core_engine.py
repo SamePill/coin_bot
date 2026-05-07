@@ -63,7 +63,6 @@ class CoreEngine(BaseEngine):
             base_invest = (self.MAX_BUDGET / self.TARGET_SLOTS) if self.TARGET_SLOTS > 0 else self.MAX_BUDGET
             base_invest *= REGIME_SETTINGS.get(current_regime, {}).get('ratio', 1.0)
             already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in core_pos_items.values())
-            krw_balance = safe_balances.get('KRW', 0.0)
 
             for ticker, t_info in core_targets.items():
                 if current_core_count >= self.TARGET_SLOTS: break
@@ -73,7 +72,8 @@ class CoreEngine(BaseEngine):
                 
                 if curr_p >= (t_info['open'] + t_info['range']*t_info['k']):
                     if analyzer.check_keltner_breakout(ticker) and analyzer.get_adx(ticker) > 25 and analyzer.check_volume_spike(ticker):
-                        if krw_balance < base_invest or (already_used + base_invest) > self.MAX_BUDGET:
+                        krw_balance = safe_balances.get('KRW', 0.0)
+                        if krw_balance < base_invest * 1.0005 or (already_used + base_invest) > self.MAX_BUDGET:
                             print(f"🛑 [CORE 예산 잠금] {ticker} 보류 (사용량: {already_used:,.0f} / 한도: {self.MAX_BUDGET:,.0f})")
                             break
                             
@@ -83,6 +83,7 @@ class CoreEngine(BaseEngine):
                         print(f"🚀 [CORE 신규 진입] {ticker} 강력한 추세 돌파 포착!")
                         success, exec_price, exec_vol = worker.execute_buy(ticker, base_invest, self.MAX_BUDGET, new_slot_idx, engine_name='CORE')
                         if success:
+                            safe_balances['KRW'] = safe_balances.get('KRW', 0.0) - (base_invest * 1.0005)
                             key = f"{ticker}_slot_{new_slot_idx}"
                             with self.bot_positions_lock:
                                 bot_positions[key] = {

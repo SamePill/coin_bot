@@ -79,14 +79,14 @@ class HunterEngine(BaseEngine):
             base_invest = (self.MAX_BUDGET / self.TARGET_SLOTS) if self.TARGET_SLOTS > 0 else self.MAX_BUDGET
             base_invest *= REGIME_SETTINGS.get(current_regime, {}).get('ratio', 1.0)
             already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in hunter_pos_items.values())
-            krw_balance = safe_balances.get('KRW', 0.0)
 
             for ticker in hunter_targets.keys():
                 if current_hunter_count >= self.TARGET_SLOTS: break
                 if ticker in [p['ticker'] for p in bot_positions.values()]: continue
 
                 if analyzer.check_hunter_dip_buy(ticker) or analyzer.is_pin_bar(ticker):
-                    if krw_balance < base_invest or (already_used + base_invest) > self.MAX_BUDGET:
+                    krw_balance = safe_balances.get('KRW', 0.0)
+                    if krw_balance < base_invest * 1.0005 or (already_used + base_invest) > self.MAX_BUDGET:
                         print(f"🛑 [HUNTER 예산 잠금] {ticker} 보류 (사용량: {already_used:,.0f} / 한도: {self.MAX_BUDGET:,.0f})")
                         break
 
@@ -96,6 +96,7 @@ class HunterEngine(BaseEngine):
                     print(f"🏹 [HUNTER 신규 진입] {ticker} 과매도 반등 포착!")
                     success, exec_price, exec_vol = worker.execute_buy(ticker, base_invest, self.MAX_BUDGET, new_slot_idx, engine_name='HUNTER')
                     if success:
+                        safe_balances['KRW'] = safe_balances.get('KRW', 0.0) - (base_invest * 1.0005)
                         key = f"{ticker}_slot_{new_slot_idx}"
                         with self.bot_positions_lock:
                             bot_positions[key] = {

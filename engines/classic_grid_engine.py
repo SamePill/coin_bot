@@ -26,8 +26,6 @@ class ClassicGridEngine(BaseEngine):
         current_prices = pyupbit.get_current_price(watch_list) if watch_list else {}
         if not isinstance(current_prices, dict): current_prices = {}
 
-        krw_balance = safe_balances.get('KRW', 0.0)
-
         for key, pos in list(cg_pos_items.items()):
             ticker = pos['ticker']
             curr_p = current_prices.get(ticker)
@@ -135,9 +133,11 @@ class ClassicGridEngine(BaseEngine):
 
                 elif curr_p <= pos['last_grid_price'] - step and curr_p > analyzer.get_ema200(ticker):
                     buy_krw = max(pos['allocated_krw'] * 0.15, 6000)
-                    if krw_balance >= buy_krw and pos['allocated_krw'] >= buy_krw:
+                    krw_balance = safe_balances.get('KRW', 0.0)
+                    if krw_balance >= buy_krw * 1.0005 and pos['allocated_krw'] >= buy_krw:
                         success, exec_price, exec_vol = worker.execute_buy(ticker, buy_krw, self.MAX_BUDGET, pos['slot_index'], engine_name='CLASSIC_GRID')
                         if success:
+                            safe_balances['KRW'] = safe_balances.get('KRW', 0.0) - (buy_krw * 1.0005)
                             time.sleep(1.5)
                             new_vol = pos['vol'] + exec_vol
                             new_avg = ((pos['buy'] * pos['vol']) + (exec_price * exec_vol)) / new_vol
@@ -158,7 +158,8 @@ class ClassicGridEngine(BaseEngine):
             for ticker in top_grid_candidates:
                 if remaining_slots <= 0: break
                 if ticker in active_tickers: continue 
-                if krw_balance < init_invest_amount: break
+                krw_balance = safe_balances.get('KRW', 0.0)
+                if krw_balance < init_invest_amount * 1.0005: break
                 
                 if (already_used + init_invest_amount) > self.MAX_BUDGET:
                     if not self.budget_lock_notified:
@@ -173,6 +174,7 @@ class ClassicGridEngine(BaseEngine):
                 
                 success, exec_price, exec_vol = worker.execute_buy(ticker, init_invest_amount, self.MAX_BUDGET, new_slot_idx, engine_name='CLASSIC_GRID')
                 if success:
+                    safe_balances['KRW'] = safe_balances.get('KRW', 0.0) - (init_invest_amount * 1.0005)
                     time.sleep(1.5) 
                     key = f"{ticker}_slot_{new_slot_idx}"
                     with self.bot_positions_lock:
