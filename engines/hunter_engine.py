@@ -29,7 +29,15 @@ class HunterEngine(BaseEngine):
             curr_p = current_prices.get(ticker)
             if not curr_p: continue
             
+            with self.bot_positions_lock:
+                # 고점 갱신 로직 보호
+                if 'peak_price' not in pos: pos['peak_price'] = curr_p
+                pos['peak_price'] = max(pos['peak_price'], curr_p)
+
             profit_rate = (curr_p - pos['buy']) / pos['buy']
+            peak_profit_rate = (pos['peak_price'] - pos['buy']) / pos['buy']
+            drop_from_peak = (pos['peak_price'] - curr_p) / pos['peak_price']
+
             currency = ticker.split('-')[1]
             sell_vol = min(pos['vol'], safe_balances.get(currency, 0.0))
             
@@ -38,11 +46,25 @@ class HunterEngine(BaseEngine):
                     del bot_positions[key]
                 continue
 
-            # 익절 (반등 시 3% 수익 확정)
-            if profit_rate >= 0.03:
+            # 💡 ADX 기반 동적 트레일링 스탑 익절
+            adx_value = analyzer.get_adx(ticker)
+            
+            # 낙폭 과대 반등 시 추세가 강하게 붙으면(ADX 40↑) 7%, 보통이면 5%, 약하면 3% 타겟
+            if adx_value >= 40: target_rate = 0.07
+            elif adx_value >= 25: target_rate = 0.05
+            else: target_rate = 0.03
+
+            # 💡 [추가] 과매수 구간(RSI 70↑) 진입 시 하락 허용폭(Callback)을 타이트하게 조절
+            rsi_value = analyzer.get_rsi_value(ticker, interval="minute15")
+            current_drop_limit = 0.015
+            if rsi_value >= 70:
+                current_drop_limit = 0.007 # 1.5% -> 0.7%로 축소
+
+            # 목표 수익률 도달 후 고점 대비 하락 시 익절 (수익 보존)
+            if peak_profit_rate >= target_rate and drop_from_peak >= current_drop_limit:
                 realized_krw = (curr_p - pos['buy']) * sell_vol
-                print(f"🎯 [HUNTER 익절] {ticker} 낙폭과대 반등 목표가 달성!")
-                if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw):
+                print(f"🎯 [HUNTER 트레일링 익절] {ticker} {target_rate*100:.0f}% 달성 후 추세 꺾임 확인.")
+                if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw, engine_name='HUNTER'):
                     with self.bot_positions_lock: del bot_positions[key]
                 continue
 
@@ -54,7 +76,7 @@ class HunterEngine(BaseEngine):
                 realized_krw = (curr_p - pos['buy']) * sell_vol
                 reason = "구조적 저점 이탈" if curr_p < struct_stop else "반등 지연(타임아웃)"
                 print(f"🛑 [HUNTER 손절] {ticker} {reason}. ({profit_rate*100:+.2f}%)")
-                if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw):
+                if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw, engine_name='HUNTER'):
                     with self.bot_positions_lock: del bot_positions[key]
                 continue
 
@@ -74,4 +96,21 @@ class HunterEngine(BaseEngine):
                 if analyzer.check_hunter_dip_buy(ticker) or analyzer.is_pin_bar(ticker):
                     if krw_balance < base_invest or (already_used + base_invest) > self.MAX_BUDGET:
                         break
-                    # (나머지 매수 실행 및 락(Lock) 관리는 worker.execute_buy 내부에 위임, main과 동일 패턴 적용)
+                    new_slot_idx = 1
+                    while new_slot_idx in [p['slot_index'] for p in bot_positions.values() if p['ticker'] == ticker]: new_slot_idx += 1
+                    
+                    print(f"🏹 [HUNTER 신규 진입] {ticker} 과매도 반등 포착!")
+                    success, exec_price, exec_vol = worker.execute_buy(ticker, base_invest, self.MAX_BUDGET, new_slot_idx, engine_name='HUNTER')
+                    if success:
+                        key = f"{ticker}_slot_{new_slot_idx}"
+                        with self.bot_positions_lock:
+                            bot_positions[key] = {
+                                'ticker': ticker, 'vol': exec_vol, 'buy': exec_price, 
+                                'slot_index': new_slot_idx, 'engine': 'HUNTER', 'buy_level': 1, 
+                                'created_at': now, 'struct_stop': analyzer.get_structural_stop(ticker),
+                                'peak_price': exec_price, 'invested_amount': exec_price * exec_vol
+                            }
+                        try: db_manager.update_position_state(key, exec_price, exec_vol, 1, engine_name='HUNTER')
+                        except AttributeError: pass
+                        current_hunter_count += 1
+                        already_used += (exec_price * exec_vol)

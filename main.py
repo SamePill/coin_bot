@@ -435,10 +435,29 @@ def run_hunter_engine(now, safe_balances, is_panic_state):
             del bot_positions[key]
             continue
 
-        # 💡 [매도 1] 익절 (반등 시 3% 수익 확정)
-        if profit_rate >= 0.03:
+        # 💡 [추가] 고점 갱신 (트레일링 스탑 필수 데이터)
+        if 'peak_price' not in pos: pos['peak_price'] = curr_p
+        pos['peak_price'] = max(pos['peak_price'], curr_p)
+        peak_profit_rate = (pos['peak_price'] - pos['buy']) / pos['buy']
+        drop_from_peak = (pos['peak_price'] - curr_p) / pos['peak_price']
+
+        # 💡 [매도 1] ADX 기반 동적 트레일링 스탑 익절
+        adx_value = analyzer.get_adx(ticker)
+        if adx_value >= 40: target_rate = 0.07
+        elif adx_value >= 25: target_rate = 0.05
+        else: target_rate = 0.03
+        
+        # 💡 [핵심 반영] SUPER_BULL 레지메에서는 최소 5%부터 트레일링 스탑 추적 시작
+        if current_regime == "SUPER_BULL":
+            target_rate = max(0.05, target_rate)
+            
+        rsi_value = analyzer.get_rsi_value(ticker, interval="minute15")
+        current_drop_limit = 0.015
+        if rsi_value >= 70: current_drop_limit = 0.007
+            
+        if peak_profit_rate >= target_rate and drop_from_peak >= current_drop_limit:
             realized_krw = (curr_p - pos['buy']) * sell_vol
-            print(f"🎯 [HUNTER 익절] {ticker} 낙폭과대 반등 목표가 달성!")
+            print(f"🎯 [HUNTER 트레일링 익절] {ticker} {target_rate*100:.0f}% 돌파 후 추세 꺾임. 수익 확정!")
             if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw, engine_name='HUNTER'):
                 del bot_positions[key]
             continue
@@ -493,7 +512,8 @@ def run_hunter_engine(now, safe_balances, is_panic_state):
                         'ticker': ticker, 'vol': exec_vol, 'buy': exec_price, 
                         'slot_index': new_slot_idx, 'engine': 'HUNTER', 'buy_level': 1, 
                         'created_at': now, 'struct_stop': analyzer.get_structural_stop(ticker),
-                        'invested_amount': exec_price * exec_vol
+                        'invested_amount': exec_price * exec_vol,
+                        'peak_price': exec_price # 💡 [누락 수정] 신규 진입 시 고점 초기화
                     }
                     try: db_manager.update_position_state(key, exec_price, exec_vol, 1, engine_name='HUNTER')
                     except AttributeError: pass
@@ -717,7 +737,9 @@ def run_grid_engine(now, safe_balances, is_panic_state):
                         'slot_index': new_slot_idx, 
                         'engine': 'GRID',
                         'buy_level': 1 ,
-                        'invested_amount': exec_price * exec_vol
+                        'invested_amount': exec_price * exec_vol,
+                        'created_at': now,       # 💡 [누락 수정] 타임컷용 진입 시간 초기화
+                        'peak_price': exec_price # 💡 [누락 수정] 트레일링 스탑용 고점 초기화
                     }
                     
                     try:
@@ -769,20 +791,38 @@ def run_scalp_engine(now, safe_balances, is_panic_state):
         actual_balance = safe_balances.get(currency, 0.0)
         sell_vol = min(pos['vol'], actual_balance)
 
-        # -------------------------------------------------------------
-        # 📈 1. 짤짤이 익절 (0.6% 도달 시 즉각 전량 익절)
-        # -------------------------------------------------------------
-        if profit_rate >= 0.006: 
+        # 💡 [추가] 고점 갱신
+        if 'peak_price' not in pos: pos['peak_price'] = curr_p
+        pos['peak_price'] = max(pos['peak_price'], curr_p)
+        peak_profit_rate = (pos['peak_price'] - pos['buy']) / pos['buy']
+        drop_from_peak = (pos['peak_price'] - curr_p) / pos['peak_price']
+
+        # 📈 1. ADX 기반 동적 트레일링 스탑 익절
+        adx_value = analyzer.get_adx(ticker, interval="minute15")
+        if adx_value >= 35: trigger_rate = 0.015
+        elif adx_value >= 25: trigger_rate = 0.010
+        else: trigger_rate = 0.006
+        
+        dynamic_callback = analyzer.get_volatility_factor(ticker)
+        rsi_value = analyzer.get_rsi_value(ticker, interval="minute5")
+        if rsi_value >= 70: dynamic_callback = max(0.001, dynamic_callback * 0.5)
+            
+        if peak_profit_rate >= trigger_rate and drop_from_peak >= dynamic_callback:
             if sell_vol <= 0:
-                print(f"⚠️ [잔고 불일치] {ticker} 매도 불가 (장부: {pos['vol']} / 실제: {actual_balance}). DB 장부를 강제 삭제합니다.")
                 db_manager.delete_position('SCALP', ticker, pos['slot_index'])
                 del bot_positions[key]
                 continue
-
             realized_krw = (curr_p - pos['buy']) * sell_vol
-            print(f"⚡ [스캘핑 익절] {ticker} 단기 수익 달성! ({profit_rate*100:+.2f}%)")
-            
+            print(f"⚡ [스캘핑 트레일링 익절] {ticker} 단기 수익 달성! ({profit_rate*100:+.2f}%)")
             if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw, engine_name='SCALP'):
+                del bot_positions[key]
+            continue
+
+        # ⏳ 2. 타임 컷 (4시간 경과 후 수익권이 아니면 탈출)
+        time_elapsed = (now - pos.get('created_at', now)).total_seconds() / 3600
+        if time_elapsed >= 4 and profit_rate < 0.003:
+            print(f"⏳ [스캘핑 타임컷] {ticker} 순환을 위해 정리")
+            if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, 0, engine_name='SCALP'):
                 del bot_positions[key]
             continue
 
@@ -814,6 +854,7 @@ def run_scalp_engine(now, safe_balances, is_panic_state):
                     bot_positions[key]['vol'] = new_vol
                     bot_positions[key]['buy_level'] = next_level
                     bot_positions[key]['invested_amount'] = pos.get('invested_amount', 0) + (exec_price * exec_vol)
+                    bot_positions[key]['peak_price'] = new_avg_price # 💡 [누락 수정] 물타기 시 고점 초기화
                     
                     try:
                         db_manager.update_position_state(key, new_avg_price, new_vol, next_level, engine_name='SCALP')
@@ -873,7 +914,9 @@ def run_scalp_engine(now, safe_balances, is_panic_state):
                     bot_positions[key] = {
                         'ticker': ticker, 'vol': exec_vol, 'buy': exec_price, 
                         'slot_index': new_slot_idx, 'engine': 'SCALP', 'buy_level': 1,
-                        'invested_amount': exec_price * exec_vol
+                        'invested_amount': exec_price * exec_vol,
+                        'created_at': now,       # 💡 [누락 수정] 타임컷용 진입 시간 초기화
+                        'peak_price': exec_price # 💡 [누락 수정] 트레일링 스탑용 고점 초기화
                     }
                     try:
                         db_manager.update_position_state(key, exec_price, exec_vol, 1, engine_name='SCALP')
@@ -937,6 +980,30 @@ def run_classic_grid_engine(now, safe_balances, is_panic_state):
         if 'allocated_krw' not in pos: 
             # 메모리에 없으면, 현재 코인당 할당된 전체 예산의 50%를 하단 물타기 예비비로 자동 세팅
             pos['allocated_krw'] = BASE_SLOT_BUDGET * 0.5 
+            
+        if 'peak_price' not in pos: pos['peak_price'] = curr_p
+        pos['peak_price'] = max(pos['peak_price'], curr_p)
+
+        # -------------------------------------------------------------
+        # ⏳ [추가] 타임 컷 (7일 경과 후 수익권 미달 시 정리)
+        # -------------------------------------------------------------
+        last_update = pos.get('created_at', now)
+        if (now - last_update) > timedelta(days=7) and profit_rate < 0.01:
+            print(f"⏳ [CG 타임컷] {ticker} 슬롯 회수")
+            if worker.execute_sell(ticker, pos['vol'], pos['slot_index'], profit_rate*100, 0, engine_name='CLASSIC_GRID'):
+                del bot_positions[key]
+            continue
+            
+        # -------------------------------------------------------------
+        # 🛡️ [추가] 안전 트레일링 스탑 (수익 보존)
+        # -------------------------------------------------------------
+        drop_from_peak = (pos['peak_price'] - curr_p) / pos['peak_price']
+        if profit_rate > 0.02 and drop_from_peak > 0.01:
+            print(f"🛑 [CG 익절보존] {ticker} 고점 대비 하락 매도")
+            realized_krw = (curr_p - pos['buy']) * pos['vol']
+            if worker.execute_sell(ticker, pos['vol'], pos['slot_index'], profit_rate*100, realized_krw, engine_name='CLASSIC_GRID'):
+                del bot_positions[key]
+            continue
 
         # -------------------------------------------------------------
         # ⚖️ 1. 스왑(교체) 로직: 타겟에서 밀려났고 1% 이상 수익이면 전량 매도
@@ -1055,6 +1122,7 @@ def run_classic_grid_engine(now, safe_balances, is_panic_state):
                     pos['vol'] = new_vol
                     pos['last_grid_price'] = exec_price
                     pos['allocated_krw'] -= buy_krw
+                    pos['peak_price'] = exec_price # 💡 [누락 수정] 물타기 시 고점 초기화
                     
                     print(f"🕸️ [그리드 하단] {ticker} 부분 매수(물타기) 완료. (새 평단: {new_avg:,.0f}원)")
 
@@ -1114,7 +1182,9 @@ def run_classic_grid_engine(now, safe_balances, is_panic_state):
                     'last_grid_price': exec_price,
                     'grid_step': analyzer.get_grid_step(ticker),
                     'allocated_krw': init_invest_amount, # 💡 [ASIS 복원] 나머지 50% 금액을 하단 물타기 예비비로 충전
-                    'invested_amount': exec_price * exec_vol
+                    'invested_amount': exec_price * exec_vol,
+                    'created_at': now,       # 💡 [누락 수정] 타임컷용 진입 시간 초기화
+                    'peak_price': exec_price # 💡 [누락 수정] 트레일링 스탑용 고점 초기화
                 }
                 
                 remaining_slots -= 1
