@@ -19,31 +19,6 @@ class GridEngine(BaseEngine):
         self.UNIT_LIST = [float(x) for x in os.getenv('GRID_UNIT_SIZES', '10000,30000').split(',')]
         self.budget_lock_notified = False
 
-    def get_dynamic_grid_step(self, ticker):
-        try:
-            df = pyupbit.get_ohlcv(ticker, interval="day", count=7)
-            if df is not None and len(df) > 1:
-                amplitudes = (df['high'] - df['low']) / df['close'] * 100
-                avg_volatility = amplitudes.mean()
-                if avg_volatility >= 5.0: return 2.0   
-                elif avg_volatility >= 2.0: return 1.0 
-                else: return 0.5                       
-        except: pass
-        return 1.0
-
-    def get_pyramiding_weight(self, buy_level, current_regime):
-        if current_regime in ["SUPER_BULL", "NORMAL"]:
-            if buy_level <= 1: return 2.0     
-            elif buy_level == 2: return 1.0   
-            elif buy_level >= 3: return 0.0   
-        else:
-            if buy_level <= 1: return 1.0     
-            elif buy_level == 2: return 2.0   
-            elif buy_level == 3: return 4.0   
-            elif buy_level == 4: return 6.0   
-            elif buy_level >= 5: return 8.0   
-        return 1.0
-
     def run(self, now, current_regime, top_grid_candidates):
         bot_positions = self.bot_positions
         grid_pos_items = {k: v for k, v in bot_positions.items() if v['engine'] == 'GRID'}
@@ -78,14 +53,14 @@ class GridEngine(BaseEngine):
                     continue
 
             # (불타기, 물타기 로직 등 기존 main.py 코드를 들고 와 동일하게 락을 감싸서 적용)
-            grid_step_percent = self.get_dynamic_grid_step(ticker)
+            grid_step_percent = analyzer.get_dynamic_grid_step(ticker)
             current_level = pos.get('buy_level', 1) 
             target_buy_price = pos['buy'] * (1 - (grid_step_percent / 100))
             target_sell_price = pos['buy'] * (1 + (grid_step_percent / 100))
             
             if curr_p <= target_buy_price:
                 next_level = current_level + 1
-                weight = self.get_pyramiding_weight(next_level, current_regime)
+                weight = analyzer.get_pyramiding_weight(next_level, current_regime)
                 if weight <= 0: continue
                 
                 base_unit = self.UNIT_LIST[pos['slot_index']-1] if (pos['slot_index']-1) < len(self.UNIT_LIST) else self.UNIT_LIST[-1]

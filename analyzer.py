@@ -10,10 +10,10 @@ import pandas_ta_classic as ta
 # 🛡️ 공용 기술 지표 함수
 # -------------------------------------------------------------
 
-def get_adx(ticker):
+def get_adx(ticker, interval="minute60"):
     """💡 ADX(평균 방향성 지수) 계산 - 추세의 강도 측정 (25 이상 시 추세 발생)"""
     try:
-        df = pyupbit.get_ohlcv(ticker, interval="minute60", count=50)
+        df = pyupbit.get_ohlcv(ticker, interval=interval, count=50)
         if df is None or df.empty: return 0
         # pandas_ta_classic을 이용한 표준 ADX 계산
         adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
@@ -36,9 +36,9 @@ def get_atr(df, period=5):
             (df['high'] - df['close'].shift(1)).abs(), 
             (df['low'] - df['close'].shift(1)).abs()
         ], axis=1).max(axis=1)
-        return tr.rolling(window=period).mean().iloc[-1]
+        return tr.rolling(window=period, min_periods=1).mean().iloc[-1]
     except: 
-        return df['high'].iloc[-2] - df['low'].iloc[-2]
+        return df['high'].iloc[-1] - df['low'].iloc[-1]
 
 def get_ema200(ticker):
     """💡 EMA 200(장기 이평선) - 장기 추세 필터"""
@@ -97,10 +97,19 @@ def check_volume_spike(ticker):
 def get_chandelier_exit(ticker, pos_peak_price, current_regime):
     """🛡️ 샹들리에 청산가 계산 (추세 추종 익절 라인)"""
     try:
-        df = pyupbit.get_ohlcv(ticker, interval="minute60", count=20)
+        # 💡 RSI 및 ATR의 안정적인 계산을 위해 조회 캔들 수를 50개로 상향
+        df = pyupbit.get_ohlcv(ticker, interval="minute60", count=50)
         if df is None or len(df) < 20: return pos_peak_price * 0.95
+
         # 시장 상황(Regime)에 따라 변동성 허용 폭 조절
         multiplier = 3.0 if current_regime == "SUPER_BULL" else (1.5 if current_regime == "CAUTION" else 2.5)
+
+        # 💡 [개선] CAUTION 장세에서 RSI가 60 이상으로 과열 조짐이 보이면, 
+        # 추세가 완전히 꺾이기 전에 더 빠르게 탈출하도록 배수(Multiplier)를 1.0으로 타이트하게 축소합니다.
+        rsi_series = calc_rsi(df['close'])
+        if not rsi_series.empty and current_regime == "CAUTION" and rsi_series.iloc[-1] > 60:
+            multiplier = 1.0
+
         return pos_peak_price - (get_atr(df, 14) * multiplier)
     except: return pos_peak_price * 0.95
 
@@ -123,10 +132,11 @@ def check_hunter_dip_buy(ticker):
         curr_price = df_session['close'].iloc[-1]
         rsi = calc_rsi(df_session['close'], 14)
         
-        # VWAP 근처에서 RSI 반등 및 거래량 증가 확인
+        # VWAP 근처에서 RSI 반등 및 거래량 증가 확인 
+        # 💡 [안전성 개선] 현재 생성 중인 불안정한 캔들이 아닌 '직전 완성 캔들' 기준으로 반등 확정 판단
         cond1 = (current_vwap * 0.975 <= curr_price <= current_vwap * 1.025)
-        cond2 = (rsi.iloc[-2] < 40 and rsi.iloc[-1] > rsi.iloc[-2])
-        cond3 = df_session['volume'].iloc[-1] > df_session['volume'].iloc[-2]
+        cond2 = (rsi.iloc[-3] < 40 and rsi.iloc[-2] > rsi.iloc[-3])
+        cond3 = df_session['volume'].iloc[-2] > df_session['volume'].iloc[-3]
         
         return cond1 and cond2 and cond3
     except: return False
@@ -134,8 +144,10 @@ def check_hunter_dip_buy(ticker):
 def is_pin_bar(ticker):
     """🏹 아래꼬리 핀바 확인 (바닥 지지력 확인)"""
     try:
-        df = pyupbit.get_ohlcv(ticker, interval="minute15", count=1)
-        o, h, l, c = df.iloc[-1][['open', 'high', 'low', 'close']]
+        # 💡 [안전성 개선] 진행 중인 캔들이 아닌 '직전 완성 캔들'을 가져와 형태 확정
+        df = pyupbit.get_ohlcv(ticker, interval="minute15", count=2)
+        if df is None or len(df) < 2: return False
+        o, h, l, c = df.iloc[-2][['open', 'high', 'low', 'close']]
         body = abs(c - o)
         lower_tail = min(o, c) - l
         # 몸통 대비 아래꼬리가 2배 이상 길고 캔들 전체의 50% 이상일 때
@@ -145,10 +157,40 @@ def is_pin_bar(ticker):
 def get_structural_stop(ticker):
     """🏹 직전 저점 기반 구조적 손절가 산출"""
     try:
-        df = pyupbit.get_ohlcv(ticker, interval="minute5", count=4)
-        if df is None or len(df) < 4: return 0
-        return df['low'].iloc[-4:-1].min()
+        # 💡 샘플 수를 20개로 늘려 더 신뢰도 높은 지지선을 찾습니다.
+        df = pyupbit.get_ohlcv(ticker, interval="minute15", count=20)
+        if df is None or len(df) < 10: return 0
+        return df['low'].min() * 0.992 # 0.8% 버퍼
     except: return 0
+
+# -------------------------------------------------------------
+# ⚡ SCALP 엔진 전용 필터
+# -------------------------------------------------------------
+
+def get_volatility_factor(ticker):
+    """⚡ [SCALP] ATR 기반 동적 트레일링 스탑 폭 계산"""
+    try:
+        # 5분봉 기준 최근 변동성 측정 (캐싱 적용 권장)
+        df = pyupbit.get_ohlcv(ticker, interval="minute5", count=10)
+        if df is None or len(df) < 5: return 0.002
+        
+        atr = get_atr(df, 5)
+        price = df['close'].iloc[-1]
+        
+        # ATR 비율의 50%를 추적 오차(Callback)로 사용
+        # 노이즈에 의한 조기 매도 방지를 위해 0.1% ~ 0.5% 사이로 제한
+        ratio = (atr / price) * 0.5
+        return max(0.001, min(0.005, ratio))
+    except:
+        return 0.002
+
+def get_rsi_value(ticker, interval="minute5"):
+    """💡 실시간 RSI 수치 조회"""
+    try:
+        df = pyupbit.get_ohlcv(ticker, interval=interval, count=50)
+        if df is None or df.empty: return 50
+        return calc_rsi(df['close']).iloc[-1]
+    except: return 50
 
 # -------------------------------------------------------------
 # 🕸️ GRID 엔진 전용 필터
@@ -170,6 +212,34 @@ def get_grid_suitability_score(ticker):
         score = (1 / (high_low_range + 0.01)) * atr_pct
         return score
     except: return 0
+
+def get_dynamic_grid_step(ticker):
+    """🕸️ 그리드 간격(Step) 동적 계산 (변동성 기반)"""
+    try:
+        df = pyupbit.get_ohlcv(ticker, interval="day", count=7)
+        if df is not None and len(df) > 1:
+            amplitudes = (df['high'] - df['low']) / df['close'] * 100
+            avg_volatility = amplitudes.mean()
+            
+            if avg_volatility >= 5.0: return 2.0   
+            elif avg_volatility >= 2.0: return 1.0 
+            else: return 0.8                       
+    except: pass
+    return 1.0
+
+def get_pyramiding_weight(buy_level, current_regime):
+    """💡 시장 국면에 따른 물타기/불타기 가중치 산출"""
+    if current_regime in ["SUPER_BULL", "NORMAL"]:
+        if buy_level <= 1: return 2.0     
+        elif buy_level == 2: return 1.0   
+        elif buy_level >= 3: return 0.0   
+    else:
+        if buy_level <= 1: return 1.0     
+        elif buy_level == 2: return 2.0   
+        elif buy_level == 3: return 4.0   
+        elif buy_level == 4: return 6.0   
+        elif buy_level >= 5: return 8.0   
+    return 1.0
 
 def get_grid_step(ticker):
     """🕸️ 그리드 간격(Step) 계산"""

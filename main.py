@@ -206,19 +206,6 @@ print(f"====================================================\n")
 # -------------------------------------------------------------
 # 🧠 하이브리드 엔진 코어 함수
 # -------------------------------------------------------------
-def get_dynamic_grid_step(ticker):
-    try:
-        df = pyupbit.get_ohlcv(ticker, interval="day", count=7)
-        if df is not None and len(df) > 1:
-            amplitudes = (df['high'] - df['low']) / df['close'] * 100
-            avg_volatility = amplitudes.mean()
-            
-            if avg_volatility >= 5.0: return 2.0   
-            elif avg_volatility >= 2.0: return 1.0 
-            else: return 0.5                       
-    except Exception as e:
-        print(f"⚠️ {ticker} 변동성 계산 오류 (기본값 1.0 적용): {e}")
-    return 1.0
 
 def background_target_fetcher():
     global core_targets, hunter_targets, current_regime
@@ -252,36 +239,13 @@ def background_target_fetcher():
             temp_hunter_candidates.append({'ticker': t, 'value': df.iloc[-2]['value'], 'open': df.iloc[-1]['open'], 'range': analyzer.get_atr(df, 5)})
         
         if temp_hunter_candidates:
-            top10 = sorted(temp_hunter_candidates, key=lambda x: x['value'], reverse=True)[:3]
+            top3 = sorted(temp_hunter_candidates, key=lambda x: x['value'], reverse=True)[:3]
             hunter_targets = {item['ticker']: item for item in top3}
     except: pass
     
     core_targets = temp_core
     print("✅ [레이더] CORE/HUNTER 타겟 갱신 완료.")
 
-def get_pyramiding_weight(buy_level, current_regime):
-    """💡 시장 상황에 따라 공격적 배팅과 방어적 물타기 모드를 자동 스위칭합니다."""
-    
-    # 1. 상승/횡보장 (SUPER_BULL, NORMAL): 회전율 극대화 (치고 빠지기)
-    if current_regime in ["SUPER_BULL", "NORMAL"]:
-        # 기본 투자금(예: 6,000원)의 2배(12,000원)로 크게 진입하여 짤짤이 수익 극대화
-        if buy_level <= 1: return 2.0     
-        # 하락 시 가볍게 1배수(6,000원)만 타고 탈출 시도
-        elif buy_level == 2: return 1.0   
-        # 상승장에서는 3차 이상 물리지 않도록 추가 시드 투입 완전 차단 (예산 보호)
-        elif buy_level >= 3: return 0.0   
-        
-    # 2. 하락장 (CAUTION, ICE_AGE): 하락장 방어 모드 (기획자님 제안 로직 적용)
-    else:
-        # 하락장이 감지되면 1차 진입(정찰병)을 1배수(6,000원)로 최소화
-        if buy_level <= 1: return 1.0     
-        # 이후 2, 4, 6, 8 배수로 부드럽게 평단가를 낮춤 (최대 소진액 제한)
-        elif buy_level == 2: return 2.0   
-        elif buy_level == 3: return 4.0   
-        elif buy_level == 4: return 6.0   
-        elif buy_level >= 5: return 8.0   
-        
-    return 1.0
 # -------------------------------------------------------------
 # 🕵️‍♂️ 그리드 전용: 종목 발굴 및 리밸런싱 로직
 # -------------------------------------------------------------
@@ -614,7 +578,7 @@ def run_grid_engine(now, safe_balances, is_panic_state):
         # 1️⃣ 하락 시: 가중치 피라미딩 매수 (물타기)
         if curr_p <= target_buy_price:
             next_level = current_level + 1
-            weight = get_pyramiding_weight(next_level, current_regime)
+            weight = analyzer.get_pyramiding_weight(next_level, current_regime)
             
             # 💡 [추가] 가중치가 0.0이면 (상승장 3차 진입 제한 등) 매수를 시도하지 않고 스킵합니다.
             if weight <= 0:
@@ -1076,10 +1040,9 @@ def run_classic_grid_engine(now, safe_balances, is_panic_state):
                     
                     # 💡 [NOW 연동] 부분 매도 로그 및 DB 장부(수량/투자금) 차감 업데이트
                     db_manager.log_trade('CLASSIC_GRID', ticker, trade_type, curr_p_after, actual_sell_vol, profit_rate*100, realized_krw)
-                    import pymysql
-                    from config import DB_CONF, ENABLE_TRADE_NOTI, send_telegram
+                    conn = None
                     try:
-                        conn = pymysql.connect(**DB_CONF)
+                        conn = db_manager.get_connection()
                         with conn.cursor() as cur:
                             sql = """
                                 UPDATE current_positions 
@@ -1088,9 +1051,11 @@ def run_classic_grid_engine(now, safe_balances, is_panic_state):
                                 WHERE account_id = %s AND engine_name = %s AND ticker = %s AND slot_index = %s
                             """
                             cur.execute(sql, (actual_sell_vol, (pos['buy'] * actual_sell_vol), db_manager.ACCOUNT_ID, ENGINE_NAME, ticker, pos['slot_index']))
-                        conn.commit(); conn.close()
+                        conn.commit()
                     except Exception as e:
                         print(f"DB 부분 매도 업데이트 오류: {e}")
+                    finally:
+                        if conn: conn.close()
 
                     # 💡 [NOW 연동] 부분 매도 텔레그램 알림 발송 (잔여 예비비 정보 포함)
                     if ENABLE_TRADE_NOTI:
