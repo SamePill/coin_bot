@@ -1,7 +1,5 @@
 import threading
 import pyupbit
-import asyncio
-import logging
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
@@ -20,14 +18,8 @@ _paused_engines = set()
 # 💡 유효한 엔진 목록 (글로벌 변수처럼 활용)
 VALID_ENGINES = ["CORE", "HUNTER", "GRID", "SCALP", "CLASSIC_GRID"]
 
-# 💡 [추가] 텔레그램 봇 내부 에러(Conflict 등)를 도커 로그에 출력하기 위한 로깅 설정
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-# 💡 [추가] httpx의 지속적인 getUpdates 폴링 로그(HTTP 200 OK) 스팸을 방지하기 위해 해당 모듈만 WARNING 레벨로 격상
-logging.getLogger("httpx").setLevel(logging.WARNING)
-
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """현재 슬롯 운영 상태 및 상세 손익 보고 (/status) - 엔진별 요약판"""
-    print("💬 [텔레그램] /status 명령어 수신 처리 중...")
     # 1. 오늘 누적 실현 수익 가져오기 (trade_logs 테이블)
     rows = db_manager.get_today_performance(0)
     total_today_profit = sum(row['total_profit'] for row in rows) if rows else 0
@@ -37,21 +29,21 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg += "──────────────────\n"
 
     # DB 장부에서 모든 엔진의 보유 코인 조회
-    import pymysql
-    from config import DB_CONF
     
     active_positions = []
+    conn = None
     try:
-        conn = pymysql.connect(**DB_CONF, charset='utf8mb4', cursorclass=pymysql.cursors.DictCursor)
+        conn = db_manager.get_connection()
         with conn.cursor() as cur:
             sql = "SELECT * FROM current_positions WHERE account_id = %s AND volume > 0"
             cur.execute(sql, (db_manager.ACCOUNT_ID,))
             active_positions = cur.fetchall()
-        conn.close()
     except Exception as e:
         msg += f"❌ DB 장부 조회 오류: {e}"
         await update.message.reply_text(msg)
         return
+    finally:
+        if conn: conn.close()
 
     if not active_positions:
         msg += "- 현재 운용 중인(매수한) 엔진이 없습니다."
@@ -113,7 +105,6 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """어제의 수익 현황 보고 (/report)"""
-    print("💬 [텔레그램] /report 명령어 수신 처리 중...")
     rows = db_manager.get_today_performance(1)
     seed_money = _get_seed_money() if _get_seed_money else 0
     
@@ -138,7 +129,6 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """지정된 엔진의 모든 포지션을 강제 청산하고 초기화 (/reset 엔진명)"""
-    print("💬 [텔레그램] /reset 명령어 수신 처리 중...")
     if not context.args:
         await update.message.reply_text("⚠️ 엔진 이름을 입력해주세요.\n👉 사용법: /reset SCALP")
         return
@@ -161,19 +151,19 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     dust_cleaned = 0  # 잔돈 청소가 발생한 횟수 기록용
 
     # 💡 내 메모리가 아닌 공용 DB 장부(current_positions)에서 해당 엔진의 코인을 조회
-    import pymysql
-    from config import DB_CONF
     import time
     
+    conn = None
     try:
-        conn = pymysql.connect(**DB_CONF, charset='utf8mb4', cursorclass=pymysql.cursors.DictCursor)
+        conn = db_manager.get_connection()
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM current_positions WHERE engine_name = %s", (target_engine,))
             target_positions = cur.fetchall()
-        conn.close()
     except Exception as e:
         await update.message.reply_text(f"❌ DB 조회 중 오류 발생: {e}")
         return
+    finally:
+        if conn: conn.close()
 
     # DB에서 찾은 타겟 엔진의 코인들을 하나씩 강제 매도 처리
     for p in target_positions:
@@ -216,11 +206,6 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reset_count += 1
                 total_realized += realized_krw
 
-        else:
-            # 💡 [버그 수정] 실제 지갑 잔고가 0이더라도 DB 장부의 유령 데이터를 지워 슬롯 점유를 해제합니다.
-            db_manager.delete_position(target_engine, ticker, slot_index)
-            reset_count += 1
-
     # 만약 타겟 엔진이 텔레그램을 돌리고 있는 본인(예: GRID)이라면, 자신의 램(RAM)도 비워줌
     if _bot_positions_lock:
         with _bot_positions_lock:
@@ -246,7 +231,6 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def pause_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """특정 엔진의 자동 매매 루프를 일시 정지 (/pause 엔진명)"""
-    print("💬 [텔레그램] /pause 명령어 수신 처리 중...")
     if not context.args:
         await update.message.reply_text("⚠️ 엔진 이름을 입력해주세요.\n👉 사용법: /pause SCALP")
         return
@@ -271,7 +255,6 @@ async def pause_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def resume_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """특정 엔진의 자동 매매 루프를 재개 (/resume 엔진명)"""
-    print("💬 [텔레그램] /resume 명령어 수신 처리 중...")
     if not context.args:
         await update.message.reply_text("⚠️ 엔진 이름을 입력해주세요.\n👉 사용법: /resume SCALP")
         return
@@ -293,27 +276,20 @@ async def resume_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def _run_bot():
     """실제 텔레그램 폴링 실행"""
-    try:
-        # 💡 [버그 수정] 백그라운드 스레드에서 asyncio를 안전하게 구동하기 위해 이벤트 루프 명시적 생성
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        app = ApplicationBuilder().token(TEL_TOKEN).build()
-        app.add_handler(CommandHandler("status", status_command))
-        app.add_handler(CommandHandler("report", report_command))
-        
-        # 💡 새로 추가한 커맨드 핸들러 등록
-        app.add_handler(CommandHandler("reset", reset_command))
-        app.add_handler(CommandHandler("help", help_command))
+    app = ApplicationBuilder().token(TEL_TOKEN).build()
+    app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CommandHandler("report", report_command))
     
-        # 💡 [추가] 정지 및 재가동 커맨드 핸들러 등록
-        app.add_handler(CommandHandler("pause", pause_command))
-        app.add_handler(CommandHandler("resume", resume_command))
-    
-        print("📲 텔레그램 봇 수신 대기 중...")
-        app.run_polling(stop_signals=None)    
-    except Exception as e:
-        print(f"🚨 [텔레그램 봇 구동 실패] {e}")
+    # 💡 새로 추가한 커맨드 핸들러 등록
+    app.add_handler(CommandHandler("reset", reset_command))
+    app.add_handler(CommandHandler("help", help_command))
+
+    # 💡 [추가] 정지 및 재가동 커맨드 핸들러 등록
+    app.add_handler(CommandHandler("pause", pause_command))
+    app.add_handler(CommandHandler("resume", resume_command))
+
+    print("📲 텔레그램 봇 수신 대기 중...")
+    app.run_polling(stop_signals=None)    
 
 def start_telegram_listener(positions_ref, lock_ref, seed_getter):
     """

@@ -11,8 +11,7 @@
 ## 1. 시스템 아키텍처 및 환경
 - **언어 및 주요 라이브러리**: Python 3, `pyupbit` (업비트 API), `pandas`, `pandas_ta_classic` (기술적 지표), `python-telegram-bot` (v20+ 비동기).
 - **데이터베이스**: MySQL / MariaDB. `db_manager.py`에서 DBUtils `PooledDB`를 사용하며, 풀 고갈(Hang) 방지를 위해 `blocking=False` 및 `get_connection()` 오토 힐링 래퍼를 거쳐 안전하게 커넥션을 획득하고 반드시 `finally: conn.close()`로 반납합니다.
-- **구동 환경 (단일 컨테이너 통합 모드)**: **하나의 도커 컨테이너**(`main.py` 무한 루프)에서 `.env`의 `ENABLED_ENGINES`에 정의된 여러 엔진(CORE, HUNTER, GRID, SCALP, CLASSIC_GRID)을 0.5초 간격으로 순차 실행하여 API 호출을 분산합니다.
-- **엔진 컨텍스트 스위칭**: 통합 루프를 돌 때 `worker.CURRENT_ENGINE`과 `db_manager.CURRENT_ENGINE` 변수에 현재 실행 중인 엔진 이름을 동적으로 주입하여 로깅과 장부 기록을 식별합니다.
+- **구동 환경 (모듈화된 단일 컨테이너)**: **하나의 도커 컨테이너**에서 `main.py`가 오케스트레이터 역할을 수행합니다. `.env`의 `ENABLED_ENGINES`에 정의된 엔진 클래스(`engines/` 폴더)들을 객체로 생성하여, 메인 루프에서 순차적으로 `run()` 메서드를 호출하며 API 호출을 분산합니다.
 - **예산 관리**: `.env` 파일에 `CORE_MAX_BUDGET`, `GRID_MAX_BUDGET`, `CG_MAX_BUDGET` 등 엔진별로 최대 예산을 개별 설정합니다. 클래식 그리드의 최대 슬롯은 `CG_TOTAL_SLOTS`로 관리됩니다. `worker.py`의 `execute_buy` 함수는 이 예산을 기준으로 매수 가능 여부를 판단합니다.
 - **상태 공유**: 봇 정지 상태, 포지션 장부는 MySQL DB (`current_positions`, `engine_status`)와 전역 메모리(`bot_positions`) 간에 동기화되며, 멀티 스레드 충돌 방지를 위해 `bot_positions_lock` 뮤텍스를 사용합니다.
 

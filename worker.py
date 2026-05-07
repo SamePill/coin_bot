@@ -4,9 +4,6 @@ import pyupbit
 import db_manager
 from config import UPBIT_ACCESS, UPBIT_SECRET, send_telegram, ENABLE_TRADE_NOTI
 
-# --- [도커 환경 변수 로드] ---
-# MAX_BUDGET = float(os.getenv('MAX_BUDGET', 0)) # 💡 [제거] 엔진별 예산 관리를 위해 전역 변수 제거
-
 # 업비트 객체 초기화
 upbit = pyupbit.Upbit(UPBIT_ACCESS, UPBIT_SECRET)
 

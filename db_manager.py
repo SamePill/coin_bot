@@ -1,6 +1,7 @@
 from datetime import datetime
 from dbutils.pooled_db import PooledDB
 import pymysql
+import time
 import pyupbit
 import os
 from config import DB_CONF, CORE_UNIVERSE, send_telegram
@@ -9,7 +10,7 @@ pool = PooledDB(
     creator=pymysql,
     maxconnections=10, # 최대 동시 연결 수
     mincached=0,       # 💡 [수정] 봇 구동 시점의 DB 연결 충돌(Boot Race) 방지를 위해 0으로 변경 (Lazy Connection)
-    blocking=True,
+    blocking=False,    # 💡 [변경] 풀 초과 시 무한 멈춤(Hang) 방지를 위해 예외 발생 모드로 변경
     ping=1,            # 💡 [추가] 커넥션 풀에서 가져올 때 유효성(ping) 검사 수행 (좀비 커넥션 방지)
     charset='utf8mb4', # 💡 [추가] 한글/이모지 등 문자열 깨짐 방지 
     **DB_CONF
@@ -20,15 +21,31 @@ pool = PooledDB(
 ACCOUNT_ID = os.getenv('ACCOUNT_ID', 'WHO?').upper()  # 설정 없으면 'MAIN'으로 기본 동작
 
 # -------------------------------------------------------------
+# 🛡️ 안전한 DB 커넥션 확보 (오토 힐링)
+# -------------------------------------------------------------
+def get_connection(retries=3, delay=1.0):
+    """풀이 꽉 찼을 때 봇이 뻗지 않고 재시도 후 안전하게 예외를 던지도록 처리"""
+    for i in range(retries):
+        try:
+            return pool.connection()
+        except Exception as e:
+            if i < retries - 1:
+                print(f"⚠️ DB 커넥션 확보 대기 중... ({i+1}/{retries}): {e}")
+                time.sleep(delay)
+            else:
+                print(f"❌ DB 커넥션 풀 초과! 시스템 정지 방지를 위해 해당 작업을 스킵합니다.")
+                raise
+
+# -------------------------------------------------------------
 # 📊 매매 기록 (trade_logs)
 # -------------------------------------------------------------
 def log_trade(engine_name, market, side, price, volume, profit_rate=0.0, realized_profit=0.0):
     """
     💡 매매 내역과 실현 수익금을 기록합니다. (다중 계정 격리 반영)
     """
+    conn = None
     try:
-        # conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
-        conn = pool.connection()
+        conn = get_connection()
         with conn.cursor() as cur:
             # 💡 [수정] account_id 컬럼 추가
             sql = """
@@ -49,17 +66,16 @@ def log_trade(engine_name, market, side, price, volume, profit_rate=0.0, realize
     except Exception as e: 
         print(f"❌ DB 기록 오류 ({engine_name} - {ACCOUNT_ID}): {e}")
     finally:
-        if 'conn' in locals() and conn:
-            conn.close()
+        if conn: conn.close()
 
 # -------------------------------------------------------------
 # 🗄️ 현장 장부 관리 (current_positions) - 다중 슬롯 및 계정 대응
 # -------------------------------------------------------------
 def get_engine_invested_total(engine_name):
     """💡 특정 계정의 특정 엔진이 사용 중인 총 투자 원금 조회"""
-    #conn = pymysql.connect(**DB_CONF)
-    conn = pool.connection()
+    conn = None
     try:
+        conn = get_connection()
         with conn.cursor() as cur:
             # 💡 [수정] account_id 조건 추가
             sql = "SELECT SUM(invested_amount) FROM current_positions WHERE account_id = %s AND engine_name = %s"
@@ -70,16 +86,15 @@ def get_engine_invested_total(engine_name):
         print(f"❌ 예산 조회 오류: {e}")
         return 0.0
     finally:
-        conn.close()
+        if conn: conn.close()
 
 # -------------------------------------------------------------
 # 🗄️ 현장 장부 관리 (update_position)
 # -------------------------------------------------------------
 def update_position(engine_name, ticker, price, volume, side, slot_index=1):
-    #conn = pymysql.connect(**DB_CONF)
-    conn = pool.connection()
-    
+    conn = None
     try:
+        conn = get_connection()
         with conn.cursor() as cur:
             if side == 'BUY':
                 # 💡 [수정] INSERT 시 created_at은 DB DEFAULT를 사용하거나 NOW()를 명시할 수 있습니다.
@@ -101,7 +116,7 @@ def update_position(engine_name, ticker, price, volume, side, slot_index=1):
     except Exception as e:
         print(f"❌ 장부 갱신 오류 ({ticker}): {e}")
     finally:
-        conn.close()
+        if conn: conn.close()
 
 # -------------------------------------------------------------
 # 🔄 기억 복구 로직 (recover_bot_positions)
@@ -110,8 +125,7 @@ def recover_bot_positions(upbit, active_engines):
     positions = {}
     conn = None
     try:
-        # conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
-        conn = pool.connection()
+        conn = get_connection()
         with conn.cursor(pymysql.cursors.DictCursor) as cur:
             if not active_engines: return positions
             
@@ -162,10 +176,9 @@ def get_today_performance(days_ago=0):
     💡 특정 일자(오늘, 어제 등) 하루 동안의 '현재 계정' 엔진별 실현 손익 통계를 계산합니다.
     - 파라미터(days_ago): 0 = 오늘, 1 = 어제, 2 = 그제
     """
+    conn = None
     try:
-        # conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
-        conn = pool.connection()
-    
+        conn = get_connection()
         with conn.cursor(pymysql.cursors.DictCursor) as cur:
             
             # 1. 입력받은 days_ago 만큼 과거의 날짜 계산
@@ -199,8 +212,7 @@ def get_today_performance(days_ago=0):
         print(f"❌ 보고서 생성 오류: {e}")
         return []
     finally:
-        if 'conn' in locals() and conn:
-            conn.close()
+        if conn: conn.close()
 
 def update_position_state(key, real_avg_price, real_vol, next_level, engine_name):
     """물타기(피라미딩) 성공 후, 평단가와 매수 차수를 내 계정 장부에만 기록합니다."""
@@ -212,9 +224,7 @@ def update_position_state(key, real_avg_price, real_vol, next_level, engine_name
     conn = None
     
     try:
-        # conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
-        conn = pool.connection()
-    
+        conn = get_connection()
         with conn.cursor() as cur:
             # 💡 [수정] account_id 조건 추가 및 안전성을 위해 engine_name 조건도 추가
             sql = """
@@ -234,10 +244,9 @@ def update_position_state(key, real_avg_price, real_vol, next_level, engine_name
 # -------------------------------------------------------------
 def set_engine_pause_state(engine_name, is_paused):
     """특정 엔진의 일시 정지 상태를 DB에 기록합니다."""
+    conn = None
     try:
-        # conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
-        conn = pool.connection()
-    
+        conn = get_connection()
         with conn.cursor() as cur:
             # 테이블이 없으면 자동 생성
             cur.execute("""
@@ -257,14 +266,13 @@ def set_engine_pause_state(engine_name, is_paused):
     except Exception as e:
         print(f"❌ 상태 기록 오류: {e}")
     finally:
-        if 'conn' in locals() and conn: conn.close()
+        if conn: conn.close()
 
 def is_engine_paused(engine_name):
     """현재 엔진이 일시 정지 상태인지 DB에서 확인합니다."""
+    conn = None
     try:
-        # conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
-        conn = pool.connection()
-    
+        conn = get_connection()
         with conn.cursor(pymysql.cursors.DictCursor) as cur:
             # 에러 방지를 위해 테이블 존재 여부를 무시하고 셀렉트 시도
             cur.execute("SELECT is_paused FROM engine_status WHERE engine_name = %s", (engine_name,))
@@ -273,17 +281,16 @@ def is_engine_paused(engine_name):
     except:
         return False # 테이블이 없거나 에러가 나면 기본값(가동) 반환
     finally:
-        if 'conn' in locals() and conn: conn.close()
+        if conn: conn.close()
 
 # -------------------------------------------------------------
 # 🧹 매도/초기화 시 포지션 완전 삭제
 # -------------------------------------------------------------
 def delete_position(engine_name, ticker, slot_index=1):
     """전량 매도 또는 강제 리셋 시 DB 장부에서 유령 데이터를 완전히 삭제합니다."""
+    conn = None
     try:
-        # conn = pymysql.connect(**DB_CONF, charset='utf8mb4')
-        conn = pool.connection()
-    
+        conn = get_connection()
         with conn.cursor() as cur:
             # 내 계정의 해당 엔진, 코인, 슬롯 데이터를 통째로 날림
             sql = """
@@ -295,6 +302,5 @@ def delete_position(engine_name, ticker, slot_index=1):
     except Exception as e:
         print(f"❌ 포지션 완전 삭제 오류: {e}")
     finally:
-        if 'conn' in locals() and conn: 
-            conn.close()
+        if conn: conn.close()
             
