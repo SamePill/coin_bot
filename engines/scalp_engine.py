@@ -42,11 +42,11 @@ class ScalpEngine(BaseEngine):
             actual_balance = safe_balances.get(currency, 0.0)
             sell_vol = min(pos['vol'], actual_balance)
 
-        if sell_vol <= 0:
-            print(f"🧹 [유령 장부 청소/SCALP] {ticker} 실제 잔고 없음. DB에서 삭제합니다.")
-            db_manager.delete_position('SCALP', ticker, pos['slot_index'])
-            with self.bot_positions_lock: del bot_positions[key]
-            continue
+            if sell_vol <= 0:
+                print(f"🧹 [유령 장부 청소/SCALP] {ticker} 실제 잔고 없음. DB에서 삭제합니다.")
+                db_manager.delete_position('SCALP', ticker, pos['slot_index'])
+                with self.bot_positions_lock: del bot_positions[key]
+                continue
 
             with self.bot_positions_lock:
                 if 'peak_price' not in pos: pos['peak_price'] = curr_p
@@ -65,36 +65,39 @@ class ScalpEngine(BaseEngine):
                 if rsi_value >= 70:
                     dynamic_callback = max(0.001, dynamic_callback * 0.5) 
 
-                if peak_profit_rate >= trigger_rate and drop_from_peak >= dynamic_callback:
-                    realized_krw = (curr_p - pos['buy']) * sell_vol
-                    print(f"⚡ [스캘핑 트레일링] {ticker} 익절 완료 ({profit_rate*100:+.2f}%)")
-                    if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw, engine_name='SCALP'):
-                        del bot_positions[key]
-                    continue
+            if peak_profit_rate >= trigger_rate and drop_from_peak >= dynamic_callback:
+                realized_krw = (curr_p - pos['buy']) * sell_vol
+                print(f"⚡ [스캘핑 트레일링] {ticker} 익절 완료 ({profit_rate*100:+.2f}%)")
+                if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw, engine_name='SCALP'):
+                    with self.bot_positions_lock:
+                        if key in bot_positions: del bot_positions[key]
+                continue
 
-                time_elapsed = (now - pos.get('created_at', now)).total_seconds() / 3600
-                if time_elapsed >= 4 and profit_rate < 0.003:
-                    print(f"⏳ [스캘핑 타임컷] {ticker} 순환을 위해 정리")
-                    if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, 0, engine_name='SCALP'):
-                        del bot_positions[key]
-                    continue
+            time_elapsed = (now - pos.get('created_at', now)).total_seconds() / 3600
+            if time_elapsed >= 4 and profit_rate < 0.003:
+                print(f"⏳ [스캘핑 타임컷] {ticker} 순환을 위해 정리")
+                if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, 0, engine_name='SCALP'):
+                    with self.bot_positions_lock:
+                        if key in bot_positions: del bot_positions[key]
+                continue
 
-                current_level = pos.get('buy_level', 1)
-                if profit_rate <= -0.010 and current_level < 2:
-                    next_level = current_level + 1
-                    base_unit = self.SCALP_UNIT_LIST[pos['slot_index']-1] if (pos['slot_index']-1) < len(self.SCALP_UNIT_LIST) else self.SCALP_UNIT_LIST[-1]
+            current_level = pos.get('buy_level', 1)
+            if profit_rate <= -0.010 and current_level < 2:
+                next_level = current_level + 1
+                base_unit = self.SCALP_UNIT_LIST[pos['slot_index']-1] if (pos['slot_index']-1) < len(self.SCALP_UNIT_LIST) else self.SCALP_UNIT_LIST[-1]
 
-                    already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in scalp_pos_items.values())
-                    krw_balance = safe_balances.get('KRW', 0.0)
+                already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in scalp_pos_items.values())
+                krw_balance = safe_balances.get('KRW', 0.0)
 
-                    if krw_balance >= base_unit and (already_used + base_unit) <= self.MAX_BUDGET:
-                        self.budget_lock_notified = False
-                        print(f"📉 [스캘핑 방어] {ticker} {next_level}차 진입 시도")
-                        success, exec_price, exec_vol = worker.execute_buy(ticker, base_unit, self.MAX_BUDGET, pos['slot_index'], engine_name='SCALP')
-                        if success:
-                            time.sleep(1.5)
-                            new_vol = pos['vol'] + exec_vol
-                            new_avg_price = ((pos['buy'] * pos['vol']) + (exec_price * exec_vol)) / new_vol
+                if krw_balance >= base_unit and (already_used + base_unit) <= self.MAX_BUDGET:
+                    self.budget_lock_notified = False
+                    print(f"📉 [스캘핑 방어] {ticker} {next_level}차 진입 시도")
+                    success, exec_price, exec_vol = worker.execute_buy(ticker, base_unit, self.MAX_BUDGET, pos['slot_index'], engine_name='SCALP')
+                    if success:
+                        time.sleep(1.5)
+                        new_vol = pos['vol'] + exec_vol
+                        new_avg_price = ((pos['buy'] * pos['vol']) + (exec_price * exec_vol)) / new_vol
+                        with self.bot_positions_lock:
                             bot_positions[key].update({
                                 'buy': new_avg_price,
                                 'vol': new_vol,
@@ -102,13 +105,13 @@ class ScalpEngine(BaseEngine):
                                 'invested_amount': pos.get('invested_amount', 0) + (exec_price * exec_vol),
                                 'peak_price': new_avg_price # 💡 물타기 후 고점 초기화
                             })
-                            try: db_manager.update_position_state(key, new_avg_price, new_vol, next_level, engine_name='SCALP')
-                            except AttributeError: pass
-                    else:
-                        if not self.budget_lock_notified:
-                            print(f"🛑 [SCALP 예산 잠금] {ticker} 물타기 보류")
-                            self.budget_lock_notified = True
-                    continue
+                        try: db_manager.update_position_state(key, new_avg_price, new_vol, next_level, engine_name='SCALP')
+                        except AttributeError: pass
+                else:
+                    if not self.budget_lock_notified:
+                        print(f"🛑 [SCALP 예산 잠금] {ticker} 물타기 보류")
+                        self.budget_lock_notified = True
+                continue
 
         # [3] 신규 진입 (빈 슬롯 채우기)
         total_active_slots = sum(active_tickers.values())
