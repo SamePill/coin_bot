@@ -10,7 +10,7 @@ from engines.base_engine import BaseEngine
 class ScalpEngine(BaseEngine):
     def __init__(self, upbit, bot_positions, bot_positions_lock):
         super().__init__(upbit, bot_positions, bot_positions_lock)
-        self.MAX_BUDGET = float(os.getenv('SCALP_MAX_BUDGET', 0))
+        self.MAX_BUDGET = float(os.getenv('SCALP_MAX_BUDGET', os.getenv('MAX_BUDGET', 0)))
         self.SCALP_TOTAL_SLOTS = int(os.getenv('SCALP_TOTAL_SLOTS', 2))
         self.SCALP_USE_MULTI_SLOT = os.getenv('SCALP_USE_MULTI_SLOT', 'True').lower() == 'true'
         self.SCALP_MAX_SLOTS_PER_COIN = int(os.getenv('SCALP_MAX_SLOTS_PER_COIN', 2))

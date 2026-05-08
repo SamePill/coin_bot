@@ -34,13 +34,14 @@ ENABLED_ENGINES_STR = os.getenv('ENABLED_ENGINES', 'CORE,HUNTER,GRID,SCALP,CLASS
 # 💡 [버그 방지] 사용자가 .env에 'CLASSIC'으로 줄여서 적은 경우 'CLASSIC_GRID'로 자동 매핑합니다.
 ACTIVE_ENGINES = ['CLASSIC_GRID' if e.strip().upper() == 'CLASSIC' else e.strip().upper() for e in ENABLED_ENGINES_STR.split(',') if e.strip()]
 
-# 💡 [V17.20] 엔진별 예산 설정 로드
+# 💡 [버그 수정] 구버전 `.env` 호환성 유지: 개별 엔진 예산이 없으면 기존 MAX_BUDGET을 그대로 사용하도록 폴백(Fallback) 처리
+LEGACY_BUDGET = float(os.getenv('MAX_BUDGET', 0))
 ENGINE_BUDGETS = {
-    'CORE': float(os.getenv('CORE_MAX_BUDGET', 0)),
-    'HUNTER': float(os.getenv('HUNTER_MAX_BUDGET', 0)),
-    'GRID': float(os.getenv('GRID_MAX_BUDGET', 0)),
-    'SCALP': float(os.getenv('SCALP_MAX_BUDGET', 0)),
-    'CLASSIC_GRID': float(os.getenv('CG_MAX_BUDGET', 0)),
+    'CORE': float(os.getenv('CORE_MAX_BUDGET', LEGACY_BUDGET)),
+    'HUNTER': float(os.getenv('HUNTER_MAX_BUDGET', LEGACY_BUDGET)),
+    'GRID': float(os.getenv('GRID_MAX_BUDGET', LEGACY_BUDGET)),
+    'SCALP': float(os.getenv('SCALP_MAX_BUDGET', LEGACY_BUDGET)),
+    'CLASSIC_GRID': float(os.getenv('CG_MAX_BUDGET', LEGACY_BUDGET)),
 }
 # 전체 예산은 모든 활성 엔진 예산의 합
 TOTAL_BUDGET = sum(ENGINE_BUDGETS[e] for e in ACTIVE_ENGINES if e in ENGINE_BUDGETS)
@@ -374,16 +375,17 @@ while True:
             last_regime_check_time = now
 
         # 💡 [추가] 4시간마다 CORE/HUNTER 타겟 스캔 (50분 언저리에 실행하여 API 몰림 방지)
-        # 💡 [수정] CORE와 HUNTER 엔진일 때만 레이더 가동
+        # 💡 [버그 수정] 봇을 켰을 때(초기화 시) 즉시 1회 스캔하도록 'last_target_fetch_time is None' 조건 강화
         if any(e in ['CORE', 'HUNTER'] for e in ACTIVE_ENGINES):
-            if now.hour % 4 == 0 and now.minute == 50 and (last_target_fetch_time is None or now >= last_target_fetch_time + timedelta(hours=3)):
+            if last_target_fetch_time is None or (now.hour % 4 == 0 and now.minute == 50 and now >= last_target_fetch_time + timedelta(hours=3)):
                 last_target_fetch_time = now 
                 threading.Thread(target=background_target_fetcher).start()
 
+        # 💡 [버그 수정] 메인 루프 병목(Freezing) 방지를 위해 그리드 스캐너에도 스레드(Thread) 적용 복구
         if any(e in ['GRID', 'SCALP', 'CLASSIC_GRID'] for e in ACTIVE_ENGINES):
             if last_grid_eval_time is None or now >= last_grid_eval_time + timedelta(hours=6):
-                evaluate_grid_candidates()
                 last_grid_eval_time = now
+                threading.Thread(target=evaluate_grid_candidates).start()
 
         # 💡 [수정] 패닉 체크를 매 루프마다 하지 않고 컨테이너별로 10초에 한 번만 수행하도록 완화하여 API 폭주 방지
         if last_panic_check_time is None or (now - last_panic_check_time).total_seconds() >= 10:

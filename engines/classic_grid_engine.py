@@ -11,7 +11,7 @@ from engines.base_engine import BaseEngine
 class ClassicGridEngine(BaseEngine):
     def __init__(self, upbit, bot_positions, bot_positions_lock):
         super().__init__(upbit, bot_positions, bot_positions_lock)
-        self.MAX_BUDGET = float(os.getenv('CG_MAX_BUDGET', 0))
+        self.MAX_BUDGET = float(os.getenv('CG_MAX_BUDGET', os.getenv('MAX_BUDGET', 0)))
         self.CG_TOTAL_SLOTS = int(os.getenv('CG_TOTAL_SLOTS', 2))
         self.ENGINE_NAME = 'CLASSIC_GRID'
         self.BASE_SLOT_BUDGET = self.MAX_BUDGET / self.CG_TOTAL_SLOTS if self.CG_TOTAL_SLOTS > 0 else self.MAX_BUDGET

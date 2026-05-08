@@ -10,7 +10,7 @@ from engines.base_engine import BaseEngine
 class HunterEngine(BaseEngine):
     def __init__(self, upbit, bot_positions, bot_positions_lock):
         super().__init__(upbit, bot_positions, bot_positions_lock)
-        self.MAX_BUDGET = float(os.getenv('HUNTER_MAX_BUDGET', 0))
+        self.MAX_BUDGET = float(os.getenv('HUNTER_MAX_BUDGET', os.getenv('MAX_BUDGET', 0)))
         self.TARGET_SLOTS = int(os.getenv('TARGET_SLOTS', 3))
 
     def run(self, now, current_regime, hunter_targets, is_panic_state, safe_balances):
