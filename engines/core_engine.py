@@ -13,6 +13,7 @@ class CoreEngine(BaseEngine):
         super().__init__(upbit, bot_positions, bot_positions_lock)
         self.MAX_BUDGET = float(os.getenv('CORE_MAX_BUDGET', os.getenv('MAX_BUDGET', 0)))
         self.TARGET_SLOTS = int(os.getenv('TARGET_SLOTS', 3))
+        self.budget_lock_notified = False
 
     def run(self, now, current_regime, core_targets, is_panic_state, safe_balances):
         bot_positions = self.bot_positions
@@ -74,9 +75,12 @@ class CoreEngine(BaseEngine):
                     if analyzer.check_keltner_breakout(ticker) and analyzer.get_adx(ticker) > 25 and analyzer.check_volume_spike(ticker):
                         krw_balance = safe_balances.get('KRW', 0.0)
                         if krw_balance < base_invest * 1.0005 or (already_used + base_invest) > self.MAX_BUDGET:
-                            print(f"🛑 [CORE 예산 잠금] {ticker} 보류 (사용량: {already_used:,.0f} / 한도: {self.MAX_BUDGET:,.0f})")
+                            if not self.budget_lock_notified:
+                                print(f"🛑 [CORE 예산/잔고 잠금] {ticker} 보류 (사용량: {already_used:,.0f} / 잔고: {krw_balance:,.0f})")
+                                self.budget_lock_notified = True
                             break
                             
+                        self.budget_lock_notified = False
                         new_slot_idx = 1
                         while new_slot_idx in [p['slot_index'] for p in bot_positions.values() if p['ticker'] == ticker]: new_slot_idx += 1
                         

@@ -129,7 +129,9 @@ class ScalpEngine(BaseEngine):
                     unit_size = self.SCALP_UNIT_LIST[current_count] if current_count < len(self.SCALP_UNIT_LIST) else self.SCALP_UNIT_LIST[-1]
                     krw_balance = safe_balances.get('KRW', 0.0)
                     if krw_balance < unit_size * 1.0005:
-                        print(f"❌ [실제 잔고 부족] {ticker} 신규 진입 불가 (필요: {unit_size:,.0f}원 / 잔고: {krw_balance:,.0f}원)")
+                        if not self.budget_lock_notified:
+                            print(f"❌ [실제 잔고 부족/SCALP] 신규 진입 불가 (필요: {unit_size:,.0f}원 / 잔고: {krw_balance:,.0f}원)")
+                            self.budget_lock_notified = True
                         break
 
                     if (already_used + unit_size) > self.MAX_BUDGET:
