@@ -34,6 +34,8 @@ class CoreEngine(BaseEngine):
                 pos['peak_price'] = max(pos['peak_price'], curr_p)
                 profit_rate = (curr_p - pos['buy']) / pos['buy']
                 
+                time_elapsed_hours = (now - pos.get('created_at', now)).total_seconds() / 3600
+                
                 currency = ticker.split('-')[1]
                 sell_vol = min(pos['vol'], safe_balances.get(currency, 0.0))
                 if sell_vol <= 0:
@@ -43,13 +45,26 @@ class CoreEngine(BaseEngine):
                         if key in bot_positions: del bot_positions[key]
                     continue
 
-                if profit_rate >= 0.05:
+                # 💡 [박스권 탈출 로직 1] Time Decay: 보유 시간이 길어질수록 익절 목표가를 하향
+                dynamic_target = 0.05
+                if time_elapsed_hours >= 24: dynamic_target = 0.02
+                elif time_elapsed_hours >= 12: dynamic_target = 0.035
+
+                if profit_rate >= dynamic_target:
                     realized_krw = (curr_p - pos['buy']) * sell_vol
-                    print(f"📈 [CORE 수익 실현] {ticker} 목표가 도달! 전량 익절")
+                    print(f"📈 [CORE 수익 실현] {ticker} 동적 목표가({dynamic_target*100:.1f}%) 도달! 전량 익절")
                     if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw, engine_name='CORE'):
                         if key in bot_positions: del bot_positions[key]
                     continue
                     
+                # 💡 [박스권 탈출 로직 2] 가짜 돌파 휩쏘 타임컷: 6시간 경과 시 약수익/보합이면 강제 정리
+                if time_elapsed_hours >= 6 and profit_rate < 0.005:
+                    realized_krw = (curr_p - pos['buy']) * sell_vol
+                    print(f"🐌 [CORE 휩쏘 타임컷] {ticker} 상승 동력 상실(6H 지연). 자금 회전을 위해 정리 ({profit_rate*100:+.2f}%)")
+                    if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw, engine_name='CORE'):
+                        if key in bot_positions: del bot_positions[key]
+                    continue
+
                 chandelier_exit_price = analyzer.get_chandelier_exit(ticker, pos['peak_price'], current_regime)
                 if curr_p < chandelier_exit_price:
                     realized_krw = (curr_p - pos['buy']) * sell_vol

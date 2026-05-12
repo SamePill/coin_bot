@@ -43,6 +43,8 @@ class HunterEngine(BaseEngine):
                 pos['peak_price'] = max(pos['peak_price'], curr_p)
                 peak_profit_rate = (pos['peak_price'] - pos['buy']) / pos['buy']
                 drop_from_peak = (pos['peak_price'] - curr_p) / pos['peak_price']
+                
+                time_elapsed_mins = (now - pos.get('created_at', now)).total_seconds() / 60
 
                 adx_value = analyzer.get_adx(ticker)
                 if adx_value >= 40: target_rate = 0.07
@@ -51,6 +53,12 @@ class HunterEngine(BaseEngine):
                 
                 if current_regime == "SUPER_BULL":
                     target_rate = max(0.05, target_rate)
+                    
+                # 💡 [박스권 탈출 로직 1] Time Decay: 장기 체류 시 목표치 대폭 하향 조정
+                if time_elapsed_mins >= 360: # 6시간 이상 경과
+                    target_rate = 0.015      # 1.5% 이상이면 탈출
+                elif time_elapsed_mins >= 180: # 3시간 이상 경과
+                    target_rate = 0.02       # 2.0% 이상이면 탈출
                     
                 rsi_value = analyzer.get_rsi_value(ticker, interval="minute15")
                 current_drop_limit = 0.015
@@ -62,11 +70,19 @@ class HunterEngine(BaseEngine):
                     if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw, engine_name='HUNTER'):
                         del bot_positions[key]
                     continue
+                    
+                # 💡 [박스권 탈출 로직 2] 추세 소멸 감지: 1시간 경과 후 변동성이 죽었다면(ADX<20) 약수익으로 즉시 런
+                if time_elapsed_mins >= 60 and adx_value < 20 and profit_rate >= 0.005:
+                    realized_krw = (curr_p - pos['buy']) * sell_vol
+                    print(f"🐌 [HUNTER 추세 소멸] {ticker} 횡보장 진입. 기회비용 확보를 위해 조기 탈출 ({profit_rate*100:+.2f}%)")
+                    if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw, engine_name='HUNTER'):
+                        del bot_positions[key]
+                    continue
 
                 struct_stop = pos.get('struct_stop', 0)
-                time_elapsed_mins = (now - pos.get('created_at', now)).total_seconds() / 60
                 
-                if curr_p < struct_stop or (time_elapsed_mins >= 45 and profit_rate <= 0):
+                # 💡 [박스권 탈출 로직 3] 타임아웃 조건 완화: 0%가 아니라 수수료를 간신히 넘는 0.5% 이하 수익이어도 컷팅
+                if curr_p < struct_stop or (time_elapsed_mins >= 45 and profit_rate <= 0.005):
                     realized_krw = (curr_p - pos['buy']) * sell_vol
                     reason = "구조적 저점 이탈" if curr_p < struct_stop else "반등 지연(타임아웃)"
                     print(f"🛑 [HUNTER 손절] {ticker} {reason}. ({profit_rate*100:+.2f}%)")
