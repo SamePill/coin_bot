@@ -1,5 +1,6 @@
 import threading
 import pyupbit
+import pymysql
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
@@ -34,7 +35,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = None
     try:
         conn = db_manager.get_connection()
-        with conn.cursor() as cur:
+        with conn.cursor(pymysql.cursors.DictCursor) as cur:
             sql = "SELECT * FROM current_positions WHERE account_id = %s AND volume > 0"
             cur.execute(sql, (db_manager.ACCOUNT_ID,))
             active_positions = cur.fetchall()
@@ -156,7 +157,7 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = None
     try:
         conn = db_manager.get_connection()
-        with conn.cursor() as cur:
+        with conn.cursor(pymysql.cursors.DictCursor) as cur:
             cur.execute("SELECT * FROM current_positions WHERE engine_name = %s", (target_engine,))
             target_positions = cur.fetchall()
     except Exception as e:
