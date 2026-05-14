@@ -28,6 +28,10 @@ CG_TOTAL_SLOTS = int(os.getenv('CG_TOTAL_SLOTS', 2))
 CG_USE_MULTI_SLOT = os.getenv('CG_USE_MULTI_SLOT', 'False').lower() == 'true'
 CG_MAX_SLOTS_PER_COIN = int(os.getenv('CG_MAX_SLOTS_PER_COIN', 1))
 
+# 💡 복리 재투자(Auto-Compound) 설정
+AUTO_COMPOUND = os.getenv('AUTO_COMPOUND', 'False').lower() == 'true'
+COMPOUND_RATE = float(os.getenv('COMPOUND_RATE', '0.5')) # 번 돈의 몇 %를 재투자할 것인가? (기본 50%)
+
 # 💡 [동적 분산] ENABLED_ENGINES를 읽어와 활성화된 엔진 수만큼 API 호출 시간을 균등 분배합니다.
 ENABLED_ENGINES_STR = os.getenv('ENABLED_ENGINES', 'CORE,HUNTER,GRID,SCALP,CLASSIC_GRID')
 
@@ -366,6 +370,17 @@ while True:
                     report_msg += f"- {r['engine']}: {r['total_profit']:+,.0f}원 ({r['avg_rate']:+.2f}%)\n"
                     total_krw += r['total_profit']
                 report_msg += f"──────────────\n💵 당일 총 합계: {total_krw:+,.0f}원"
+                
+            # 💡 [자동 복리 재투자] 누적 수익을 반영하여 엔진별 예산 한도를 동적으로 상향
+            if AUTO_COMPOUND:
+                total_profit = db_manager.get_total_realized_profit()
+                if total_profit > 0 and TOTAL_BUDGET > 0:
+                    reinvest_pool = total_profit * COMPOUND_RATE
+                    report_msg += f"\n\n🔄 [스노우볼 복리] 누적 수익 반영\n- 총 잉여 예산 {reinvest_pool:,.0f}원 추가 확보!"
+                    for eng_name, eng_obj in active_engines.items():
+                        base_budget = ENGINE_BUDGETS.get(eng_name, 0)
+                        weight = base_budget / TOTAL_BUDGET # 기존 예산 비율만큼 쪼개서 분배
+                        eng_obj.MAX_BUDGET = base_budget + (reinvest_pool * weight)
             
             send_telegram(report_msg)
             last_daily_report_hour = now.hour # 💡 해당 시간 발송 완료 기록

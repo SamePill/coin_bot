@@ -304,3 +304,21 @@ def delete_position(engine_name, ticker, slot_index=1):
     finally:
         if conn: conn.close()
             
+
+# -------------------------------------------------------------
+# 💰 누적 수익금 조회 (복리 재투자용)
+# -------------------------------------------------------------
+def get_total_realized_profit():
+    """현재 계정의 총 누적 실현 수익 조회"""
+    conn = None
+    try:
+        conn = get_connection()
+        with conn.cursor() as cur:
+            sql = "SELECT SUM(realized_profit) FROM trade_logs WHERE account_id = %s"
+            cur.execute(sql, (ACCOUNT_ID,))
+            result = cur.fetchone()
+            return float(result[0]) if result and result[0] is not None else 0.0
+    except Exception as e:
+        return 0.0
+    finally:
+        if conn: conn.close()
