@@ -185,7 +185,7 @@ last_panic_check_time = datetime.now()
 is_panic_state = False
 last_regime_check_time = None
 
-last_grid_eval_time = datetime.now() - timedelta(hours=5, minutes=60)
+last_grid_eval_time = datetime.now() - timedelta(hours=2) # 💡 즉시 실행되도록 초기값 조정
 
 print(f"====================================================")
 print(f"🏆 [시스템] Aegis-Elite V17.18 통합 엔진 패치 가동 (활성: {', '.join(ACTIVE_ENGINES)})")
@@ -286,7 +286,8 @@ def evaluate_grid_candidates():
             time.sleep(0.3) # 💡 [API 차단 방지] 다중 컨테이너 환경 고려 0.3초(약 3.3회/초)로 추가 완화
             
         sorted_scores = sorted(scores, key=lambda x: x['score'], reverse=True)
-        top_grid_candidates = [item['ticker'] for item in sorted_scores[:GRID_TOTAL_SLOTS]]
+        # 💡 [버그 수정] 후보군 파이가 너무 적어 GRID/CG가 매수를 못하는 문제 해결 (상위 10개로 넉넉하게 추출)
+        top_grid_candidates = [item['ticker'] for item in sorted_scores[:10]]
         # 💡 [수정] 통합 환경에 맞게 특정 엔진 구동 여부에 따라 발송
         if 'GRID' in ACTIVE_ENGINES:
             msg = f"🔍 [그리드 레이더] 신규 타겟 선정 완료\n- 후보: {', '.join(top_grid_candidates[:5])}..."
@@ -382,8 +383,9 @@ while True:
                 threading.Thread(target=background_target_fetcher).start()
 
         # 💡 [버그 수정] 메인 루프 병목(Freezing) 방지를 위해 그리드 스캐너에도 스레드(Thread) 적용 복구
+        # 💡 [개선] 스캔 주기를 6시간 -> 1시간으로 단축하여 시장 변화에 빠르게 대응
         if any(e in ['GRID', 'SCALP', 'CLASSIC_GRID'] for e in ACTIVE_ENGINES):
-            if last_grid_eval_time is None or now >= last_grid_eval_time + timedelta(hours=6):
+            if last_grid_eval_time is None or now >= last_grid_eval_time + timedelta(hours=1):
                 last_grid_eval_time = now
                 threading.Thread(target=evaluate_grid_candidates).start()
 

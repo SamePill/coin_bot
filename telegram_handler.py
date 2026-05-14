@@ -1,6 +1,7 @@
 import threading
 import pyupbit
 import pymysql
+import traceback
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
@@ -275,6 +276,20 @@ async def resume_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(f"▶️ [{target_engine}] 엔진 루프가 다시 가동을 시작합니다!")
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """명령어 실행 중 발생하는 예외를 캐치하여 텔레그램으로 전송합니다."""
+    print(f"🚨 [텔레그램 핸들러 에러] {context.error}")
+    traceback.print_exception(type(context.error), context.error, context.error.__traceback__)
+    
+    error_msg = (
+        f"🚨 [텔레그램 봇 명령어 처리 오류]\n"
+        f"시스템에서 명령을 처리하던 중 예외가 발생했습니다.\n\n"
+        f"원인: {str(context.error)[:500]}"
+    )
+    
+    if isinstance(update, Update) and update.effective_chat:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=error_msg)
+
 def _run_bot():
     """실제 텔레그램 폴링 실행"""
     app = ApplicationBuilder().token(TEL_TOKEN).build()
@@ -288,6 +303,9 @@ def _run_bot():
     # 💡 [추가] 정지 및 재가동 커맨드 핸들러 등록
     app.add_handler(CommandHandler("pause", pause_command))
     app.add_handler(CommandHandler("resume", resume_command))
+
+    # 💡 글로벌 에러 핸들러 등록
+    app.add_error_handler(error_handler)
 
     print("📲 텔레그램 봇 수신 대기 중...")
     app.run_polling(stop_signals=None)    
