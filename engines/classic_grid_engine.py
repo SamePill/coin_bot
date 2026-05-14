@@ -159,7 +159,12 @@ class ClassicGridEngine(BaseEngine):
                 if remaining_slots <= 0: break
                 if ticker in active_tickers: continue 
                 krw_balance = safe_balances.get('KRW', 0.0)
-                if krw_balance < init_invest_amount * 1.0005: break
+                if krw_balance < init_invest_amount * 1.0005: 
+                    if not getattr(self, 'balance_lock_notified', False):
+                        print(f"🛑 [실제 잔고 부족/CLASSIC_GRID] 신규 진입 불가. (필요: {init_invest_amount:,.0f}원 / 실제 잔고: {krw_balance:,.0f}원)")
+                        self.balance_lock_notified = True
+                    break
+                self.balance_lock_notified = False
                 
                 if (already_used + init_invest_amount) > self.MAX_BUDGET:
                     if not self.budget_lock_notified:

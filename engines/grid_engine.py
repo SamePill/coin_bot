@@ -150,7 +150,11 @@ class GridEngine(BaseEngine):
                     
                     krw_balance = safe_balances.get('KRW', 0.0)
                     if krw_balance < unit_size * 1.0005:
-                        break # 잔고가 부족하면 조용히 다음 스캔 대기
+                        if not getattr(self, 'balance_lock_notified', False):
+                            print(f"🛑 [실제 잔고 부족/GRID] 신규 진입 불가. (필요: {unit_size:,.0f}원 / 실제 잔고: {krw_balance:,.0f}원)")
+                            self.balance_lock_notified = True
+                        break
+                    self.balance_lock_notified = False
                     
                     already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in grid_pos_items.values())
                     if (already_used + unit_size) > self.MAX_BUDGET:
