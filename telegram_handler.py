@@ -2,6 +2,7 @@ import threading
 import pyupbit
 import pymysql
 import traceback
+import time
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
@@ -153,8 +154,6 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     dust_cleaned = 0  # 잔돈 청소가 발생한 횟수 기록용
 
     # 💡 내 메모리가 아닌 공용 DB 장부(current_positions)에서 해당 엔진의 코인을 조회
-    import time
-    
     conn = None
     try:
         conn = db_manager.get_connection()
@@ -307,8 +306,16 @@ def _run_bot():
     # 💡 글로벌 에러 핸들러 등록
     app.add_error_handler(error_handler)
 
-    print("📲 텔레그램 봇 수신 대기 중...")
-    app.run_polling(stop_signals=None)    
+    # 💡 [오토 힐링] 네트워크 오류로 텔레그램 수신이 끊기면 무한 재시도
+    while True:
+        try:
+            print("📲 텔레그램 봇 수신 대기 중...")
+            app.run_polling(stop_signals=None)
+            break  # 정상 종료 시 루프 탈출
+        except Exception as e:
+            print(f"⚠️ [텔레그램 연결 오류] 네트워크 문제로 봇 연결 실패: {e}")
+            print("🔄 10초 후 재연결을 시도합니다...")
+            time.sleep(10)
 
 def start_telegram_listener(positions_ref, lock_ref, seed_getter):
     """
