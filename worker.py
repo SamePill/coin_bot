@@ -22,9 +22,8 @@ def execute_buy(ticker, amount, engine_budget, slot_index=1, engine_name='CORE')
     try:
         # 💡 [지능형 컨트롤 타워] 시장 장세에 따라 진입 금액(UNIT_SIZE) 동적 조절
         original_amount = amount
-        if DYNAMIC_UNIT_MULTIPLIER != 1.0:
-            amount = amount * DYNAMIC_UNIT_MULTIPLIER
-            amount = max(5500.0, amount)  # 업비트 최소 주문 금액(5,000원) + 수수료 여유분 방어
+        amount = amount * DYNAMIC_UNIT_MULTIPLIER
+        amount = max(5500.0, amount)  # 💡 [버그 수정] 가변 배수와 무관하게 업비트 최소 주문 금액(5,000원)은 무조건 방어
             
         # 1. DB 장부에서 이 엔진(CORE/HUNTER/GRID)이 현재 점유 중인 총 자산 확인
         already_used = db_manager.get_engine_invested_total(engine_name)
