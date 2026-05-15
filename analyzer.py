@@ -28,6 +28,25 @@ def calc_rsi(series, period=14):
     ema_down = down.ewm(com=period-1, adjust=False).mean()
     return 100 - (100 / (1 + (ema_up / ema_down)))
 
+def get_rsi_value(ticker, interval="minute15", period=14):
+    """💡 지정된 분봉의 현재 RSI 값을 계산하여 반환합니다."""
+    try:
+        df = pyupbit.get_ohlcv(ticker, interval=interval, count=period * 2)
+        if df is None or len(df) < period: return 50
+        return calc_rsi(df['close'], period).iloc[-1]
+    except: return 50
+
+def get_volatility_factor(ticker):
+    """⚡ 스캘핑 트레일링 스탑을 위한 유동적 콜백 비율(%) 산출"""
+    try:
+        df = pyupbit.get_ohlcv(ticker, interval="minute5", count=20)
+        if df is None or len(df) < 14: return 0.005
+        
+        atr = get_atr(df, 14)
+        current_price = df['close'].iloc[-1]
+        return max(0.002, min(0.015, (atr / current_price) * 0.4))
+    except: return 0.005
+
 def get_atr(df, period=5):
     """💡 ATR(평균 실제 범위) 계산 - 변동성 측정"""
     try:
