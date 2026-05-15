@@ -80,6 +80,32 @@ if USE_REDIS_CACHE:
         USE_REDIS_CACHE = False
         SAFE_MODE_DELAY = 1.5 # 다중 봇 동시 API 호출 WAF 방어용 1.5초 강제 지연
 
+# 💡 [V17.26] get_tickers 캐싱 패치 추가 (API 병목 주범 제거)
+_original_get_tickers = pyupbit.get_tickers
+
+def _safe_get_tickers(fiat="KRW", verbose=False):
+    cache_key = f"tickers_{fiat}_{verbose}"
+    if USE_REDIS_CACHE:
+        try:
+            cached = redis_client.get(cache_key)
+            if cached: return json.loads(cached.decode('utf-8'))
+        except: pass
+
+    retries = 3
+    for i in range(retries):
+        try:
+            if SAFE_MODE_DELAY > 0: time.sleep(SAFE_MODE_DELAY)
+            res = _original_get_tickers(fiat=fiat, verbose=verbose)
+            if res is not None:
+                if USE_REDIS_CACHE:
+                    try: redis_client.setex(cache_key, 3600, json.dumps(res)) # 종목 목록은 1시간 캐싱
+                    except: pass
+                return res
+        except Exception as e:
+            time.sleep(2)
+    return []
+pyupbit.get_tickers = _safe_get_tickers
+
 # 💡 [V17.18] Monkey Patching (API 호출 초과 시 오토 힐링 추가)
 _original_get_current_price = pyupbit.get_current_price
 
@@ -90,6 +116,14 @@ def _safe_get_current_price(ticker, limit_info=False, verbose=False):
         try:
             cached = redis_client.get(cache_key)
             if cached: return json.loads(cached.decode('utf-8'))
+            
+            # 💡 [핵심 방어] Cache Stampede 방지 분산 락(Mutex)
+            lock_key = f"lock_{cache_key}"
+            acquired = redis_client.set(lock_key, "1", nx=True, ex=3) # 3초간 접근 잠금
+            if not acquired:
+                time.sleep(0.3) # 대표 봇이 가져올 때까지 0.3초 대기
+                cached = redis_client.get(cache_key)
+                if cached: return json.loads(cached.decode('utf-8'))
         except: pass
 
     retries = 3
@@ -180,6 +214,14 @@ def _safe_get_ohlcv(ticker, interval="day", count=200, to=None, period=0.1):
                 try:
                     cached = redis_client.get(f"ohlcv_{cache_key}")
                     if cached: return pickle.loads(cached)
+                    
+                    # 💡 [핵심 방어] OHLCV Cache Stampede 방지 분산 락(Mutex)
+                    lock_key = f"lock_ohlcv_{cache_key}"
+                    acquired = redis_client.set(lock_key, "1", nx=True, ex=10) # 10초간 접근 잠금
+                    if not acquired:
+                        time.sleep(0.5) # 대표 봇이 가져올 때까지 0.5초 대기
+                        cached = redis_client.get(f"ohlcv_{cache_key}")
+                        if cached: return pickle.loads(cached)
                 except: pass
             else:
                 # Redis가 꺼져있거나 연결 실패 시 기존 로컬 캐시 사용

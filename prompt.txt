@@ -1,4 +1,4 @@
-# [Aegis-Elite V17.25] 암호화폐 자동 매매 봇 시스템 컨텍스트
+# [Aegis-Elite V17.26] 암호화폐 자동 매매 봇 시스템 컨텍스트
 
 당신은 숙련된 퀀트 투자 개발자이자 Python/데이터 분석 전문가입니다. 
 아래는 제가 운영 중인 업비트(Upbit) 기반 암호화폐 자동 매매 봇의 핵심 아키텍처와 로직입니다. 
@@ -11,7 +11,7 @@
 ## 1. 시스템 아키텍처 및 환경
 - **언어 및 주요 라이브러리**: Python 3, `pyupbit` (업비트 API), `pandas`, `pandas_ta_classic` (기술적 지표), `python-telegram-bot` (v20+ 비동기).
 - **데이터베이스**: MySQL (DBUtils `PooledDB`를 활용한 커넥션 풀링), 다중 계정 지원(`ACCOUNT_ID`).
-- **구동 환경 (V17.25 통합)**: **단일 `docker-compose.yml` 다중 컨테이너** 환경. 여러 봇(계정)이 하나의 **Redis 캐시 컨테이너** 지능을 공유하여 WAF 차단을 방지하며, 각 봇은 독립된 `.env` 파일로 통합 제어됩니다.
+- **구동 환경 (V17.26 통합)**: **단일 `docker-compose.yml` 다중 컨테이너** 환경. 여러 봇(계정)이 하나의 **Redis 캐시 컨테이너** 지능을 공유하여 WAF 차단을 방지하며, 각 봇은 독립된 `.env` 파일로 통합 제어됩니다.
 - **예산 관리 (Dynamic Allocation)**: `DYNAMIC_ALLOCATION=True` 모드 시 컨트롤 타워가 15분 주기로 시장을 모니터링하여 `DYNAMIC_TOTAL_BUDGET` 풀을 기반으로 엔진별 가중치 및 슬롯당 1회 투자 금액(Unit Size)을 스케일링합니다. 비율 변경 발생 시 즉시 텔레그램 알림이 발송되며, /status 및 봇 시작 알림에서도 동적/고정 모드 여부와 분배 비율을 확인할 수 있습니다.
 - **상태 공유**: 봇 정지 상태, 포지션 장부 등은 MySQL DB (`current_positions`, `engine_status`)를 통해 동기화되며, 전역 메모리(`bot_positions`)에 캐싱되어 관리됩니다.
 
@@ -39,7 +39,7 @@
 
 ## 4. API 방어 및 오토 힐링 (안전장치)
 - **API 호출 최적화**: 메인 루프 최상단에서 `upbit.get_balances()`를 **단 한 번만 호출**하여 `safe_balances` 변수에 캐싱한 뒤, 모든 엔진 함수에 파라미터로 전달하여 API 중복 호출을 원천 차단합니다.
-- **Monkey Patching & 안전 모드(Safe Mode)**: `pyupbit`의 주요 API를 몽키 패치하여 중앙 Redis에 데이터를 캐싱합니다. 만약 Redis가 다운되면 `SAFE_MODE_DELAY`가 발동하여 다중 봇이 동시에 API를 호출하더라도 속도를 1.5초 이상 강제 지연시켜 WAF 차단을 완벽히 방어합니다.
+- **Monkey Patching & 분산 락(Mutex)**: `pyupbit`의 주요 API(`get_tickers`, `get_ohlcv`, `get_current_price`)를 몽키 패치하여 중앙 Redis에 캐싱합니다. 다중 봇이 캐시 만료 시 동시에 API를 찌르는 '캐시 스탬피드' 현상을 막기 위해 Redis `set(nx=True)`를 이용한 분산 락을 구현하여 가장 먼저 접근한 1대의 봇만 API를 호출하도록 WAF 차단을 완벽 방어합니다.
 - **먼지(Dust) 방지**: 매도 후 남는 코인 가치가 6,000원 미만일 경우 전량 매도로 스위칭하여 지갑에 쪼가리가 남는 것을 방지합니다.
 
 ## 5. 데이터베이스 스키마 구조 (`db_manager.py`)
