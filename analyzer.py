@@ -179,6 +179,20 @@ def get_grid_step(ticker):
         return get_atr(df, 14) * 0.5
     except: return 0
 
+def get_dynamic_grid_step(ticker):
+    """🕸️ 변동성(ATR) 기반 동적 그리드 매매 간격(%) 산출"""
+    try:
+        df = pyupbit.get_ohlcv(ticker, interval="minute60", count=20)
+        if df is None or len(df) < 14: return 1.5 # 기본 간격 1.5%
+        
+        atr = get_atr(df, 14)
+        current_price = df['close'].iloc[-1]
+        
+        # ATR을 현재가 대비 백분율(%)로 변환 (최소 1.0% ~ 최대 5.0% 제한)
+        step_pct = (atr / current_price) * 100
+        return max(1.0, min(5.0, step_pct))
+    except: return 1.5
+
 # -------------------------------------------------------------
 # 🌍 시장 레지메 (Market Regime)
 # -------------------------------------------------------------
