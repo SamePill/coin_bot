@@ -45,7 +45,8 @@ show_usage() {
     echo ""
     echo " 2. 모니터링"
     echo "    ./manage.sh report      : 💰 통합 수익 및 지갑 상태 조회"
-    echo "    ./manage.sh logs        : 봇 전체 실시간 로그 확인"
+    echo "    ./manage.sh logs [이름] : 실시간 로그 확인 (전체 또는 특정 봇)"
+    echo "      * 예: ./manage.sh logs (전체) / ./manage.sh logs bot_account_1 (특정 봇)"
     echo ""
     echo " 3. 시스템 제어 (엔진 개별 제어는 텔레그램 /pause, /resume 사용)"
     echo "    ./manage.sh start [봇이름]   : 시스템 기동 (특정 봇만 기동 가능)"
@@ -105,8 +106,10 @@ case "$1" in
     logs)
         # 💡 특정 봇 로그만 볼 수 있도록 개선 (예: ./manage.sh logs bot_account_1)
         if [ -z "$2" ]; then
+            echo "📋 전체 시스템의 실시간 로그를 출력합니다. (종료: Ctrl+C)"
             docker-compose logs -f --tail 50
         else
+            echo "📋 [$2] 컨테이너의 실시간 로그를 출력합니다. (종료: Ctrl+C)"
             docker-compose logs -f --tail 50 "$2"
         fi
         ;;

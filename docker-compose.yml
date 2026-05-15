@@ -9,7 +9,18 @@ services:
     ports:
       - "6379:6379"
 
-  # 2. 첫 번째 업비트 계정 봇
+
+  # 첫 번째 업비트 계정 봇
+  # nsp
+  bot_account_0:
+    build: .
+    container_name: aegis_bot_0
+    restart: always
+    env_file: .env.bot0     # 💡 각 봇의 API키와 설정을 분리
+    depends_on:
+      - aegis_redis
+
+  # 두번째 업비트 계정 봇
   # hs
   bot_account_1:
     build: .
@@ -19,7 +30,7 @@ services:
     depends_on:
       - aegis_redis
 
-  # 3. 두 번째 업비트 계정 봇 (활성화하려면 주석 해제)
+  # 세번째 업비트 계정 봇 (활성화하려면 주석 해제)
   # lhy
   bot_account_2:
      build: .
