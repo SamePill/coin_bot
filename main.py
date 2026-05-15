@@ -399,6 +399,10 @@ while True:
                 report_msg += f"──────────────\n💵 총 실현 손익: {total_krw:+,.0f}원"
             
             send_telegram(report_msg)
+            
+            # 💡 [추가] 90일 지난 오래된 매매 로그 자동 삭제 (디스크 용량 관리)
+            db_manager.cleanup_old_trade_logs(90)
+            
             last_daily_report_day = now.day # 발송 완료 기록
 
         # 💡 [수정] 정기 보고서 발송 (8, 13, 18, 23시) - GRID에서만 보내기 (중복발송))

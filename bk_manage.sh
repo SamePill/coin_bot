@@ -34,6 +34,28 @@ check_env_files() {
     fi
 }
 
+# --- [1.6 도커 컨테이너 순차 기동 함수 (API 스파이크 방지)] ---
+start_all_sequentially() {
+    check_env_files
+    
+    echo "🗄️ [1/3] 공통 캐시(Redis) 인프라 우선 기동..."
+    docker-compose up -d aegis_redis
+    sleep 3
+
+    echo "🤖 [2/3] 봇 컨테이너 순차 기동 시작..."
+    # docker-compose.yml 에서 bot_account_ 로 시작하는 활성 서비스명만 추출
+    BOT_SERVICES=$(grep -E '^[[:space:]]*bot_account_[0-9]+:' docker-compose.yml | tr -d ' :')
+    
+    for bot in $BOT_SERVICES; do
+        echo "▶️ [$bot] 기동 중..."
+        docker-compose up -d --build --remove-orphans "$bot"
+        echo "⏳ 초기 API 집중(WAF 차단)을 막기 위해 10초 대기합니다..."
+        sleep 10
+    done
+    
+    echo "✅ [3/3] 통합 봇 전체 시스템 순차 기동 완료!"
+}
+
 # --- [2. 안내 문구 함수] ---
 show_usage() {
     echo ""
@@ -79,9 +101,8 @@ case "$1" in
         fi
 
         echo "🚀 [STEP 2] 통합 엔진 배포 시작..."
-        check_env_files
-        # 단일 컨테이너 모드로 전체 빌드 및 실행
-        docker-compose up -d --build --remove-orphans
+        # API 차단 방지를 위해 컨테이너들을 15초 간격으로 순차 기동합니다.
+        start_all_sequentially
 
         echo "🧹 [STEP 3] 시스템 정리..."
         docker image prune -f
@@ -116,9 +137,8 @@ case "$1" in
 
     start)
         if [ -z "$2" ]; then
-            check_env_files
-            docker-compose up -d
-            echo "▶️ 통합 봇 전체 시스템을 기동했습니다."
+            # 전체 기동 시 순차 기동 로직 사용
+            start_all_sequentially
         else
             # 특정 봇 지정 시 특정 봇의 env_file 존재 여부는 docker-compose 자체가 에러를 뱉어주므로
             # 전체 통합 검사를 한 번 수행하는 것으로 충분합니다.
@@ -141,8 +161,18 @@ case "$1" in
     restart)
         if [ -z "$2" ]; then
             check_env_files
-            docker-compose restart
-            echo "🔄 전체 시스템 재시작 완료."
+            echo "🗄️ 공통 캐시(Redis) 재시작..."
+            docker-compose restart aegis_redis
+            sleep 3
+            
+            BOT_SERVICES=$(grep -E '^[[:space:]]*bot_account_[0-9]+:' docker-compose.yml | tr -d ' :')
+            for bot in $BOT_SERVICES; do
+                echo "🔄 [$bot] 재시작 및 환경변수 반영 중..."
+                docker-compose up -d "$bot"
+                echo "⏳ API 호출 분산을 위해 15초 대기..."
+                sleep 15
+            done
+            echo "🔄 전체 시스템 순차 재시작 완료."
         else
             check_env_files
             # 💡 특정 컨테이너 환경변수 변경을 적용하기 위해 up -d 명령을 사용합니다.
@@ -158,7 +188,8 @@ case "$1" in
 
     db)
         echo "🗄️  DB 접속 (exit로 종료)"
-        docker exec -it aegis_db mariadb -u root -p"${DB_PASSWORD}" "${DB_NAME}"
+        # 💡 [수정] 네이티브 DB 사용 환경에 맞게 호스트 직접 접속 명령어로 변경
+        mariadb -h 127.0.0.1 -u root -p"${DB_PASSWORD}" "${DB_NAME}"
         ;;
 
     redis)
