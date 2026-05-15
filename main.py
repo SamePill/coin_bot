@@ -118,8 +118,13 @@ _original_get_current_price = pyupbit.get_current_price
 
 def _safe_get_current_price(ticker, limit_info=False, verbose=False):
     # 1. 중앙 Redis 캐시 확인 (과도한 1초 이내 동일 호출 방어)
-    cache_key = f"price_{ticker}"
-    if USE_REDIS_CACHE and isinstance(ticker, str):
+    if isinstance(ticker, list):
+        # 리스트일 경우 정렬하여 고유한 단일 캐시 키 생성 (예: price_KRW-A,KRW-B)
+        cache_key = "price_" + ",".join(sorted(ticker))
+    else:
+        cache_key = f"price_{ticker}"
+        
+    if USE_REDIS_CACHE:
         try:
             cached = redis_client.get(cache_key)
             if cached: return json.loads(cached.decode('utf-8'))
@@ -140,7 +145,7 @@ def _safe_get_current_price(ticker, limit_info=False, verbose=False):
             res = _original_get_current_price(ticker, limit_info, verbose)
             if res is not None: 
                 # 2. Redis에 저장 (2초 TTL 적용)
-                if USE_REDIS_CACHE and isinstance(ticker, str):
+                if USE_REDIS_CACHE:
                     try: redis_client.setex(cache_key, 2, json.dumps(res))
                     except: pass
                 return res
