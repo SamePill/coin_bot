@@ -52,6 +52,10 @@ ENGINE_BUDGETS = {
 # 전체 예산은 모든 활성 엔진 예산의 합
 TOTAL_BUDGET = sum(ENGINE_BUDGETS[e] for e in ACTIVE_ENGINES if e in ENGINE_BUDGETS)
 
+# 💡 [V17.21] 지능형 컨트롤 타워: 동적 예산 할당 (Dynamic Allocation)
+DYNAMIC_ALLOCATION = os.getenv('DYNAMIC_ALLOCATION', 'False').lower() == 'true'
+DYNAMIC_TOTAL_BUDGET = float(os.getenv('DYNAMIC_TOTAL_BUDGET', str(TOTAL_BUDGET)))
+
 
 # 💡 [제거] 다중 컨테이너용 딜레이 로직 제거
 
