@@ -55,10 +55,8 @@ class ScalpEngine(BaseEngine):
                 peak_profit_rate = (pos['peak_price'] - pos['buy']) / pos['buy']
                 drop_from_peak = (pos['peak_price'] - curr_p) / pos['peak_price']
 
-                adx_value = analyzer.get_adx(ticker, interval="minute15") # Scalp는 15분 ADX가 적합
-                if adx_value >= 35: trigger_rate = 0.015
-                elif adx_value >= 25: trigger_rate = 0.010
-                else: trigger_rate = 0.006
+                # 💡 [V17.29] 동적 익절 목표가: 실시간 변동성(ATR)을 반영하여 0.5% ~ 2.0% 사이에서 목표가 산출
+                trigger_rate = analyzer.get_dynamic_scalp_target(ticker) / 100.0
 
                 dynamic_callback = analyzer.get_volatility_factor(ticker)
                 rsi_value = analyzer.get_rsi_value(ticker, interval="minute5")
@@ -82,7 +80,11 @@ class ScalpEngine(BaseEngine):
                 continue
 
             current_level = pos.get('buy_level', 1)
-            if profit_rate <= -0.010 and current_level < 2:
+            
+            # 💡 [V17.30] 동적 물타기(DCA) 간격: ATR에 비례하여 유동적으로 하락폭 결정
+            dynamic_dca_target = analyzer.get_dynamic_scalp_dca_target(ticker) / 100.0
+            
+            if profit_rate <= -dynamic_dca_target and current_level < 2:
                 next_level = current_level + 1
                 base_unit = self.SCALP_UNIT_LIST[pos['slot_index']-1] if (pos['slot_index']-1) < len(self.SCALP_UNIT_LIST) else self.SCALP_UNIT_LIST[-1]
 
@@ -91,7 +93,7 @@ class ScalpEngine(BaseEngine):
 
                 if krw_balance >= base_unit * 1.0005 and (already_used + base_unit) <= self.MAX_BUDGET:
                     self.budget_lock_notified = False
-                    print(f"📉 [스캘핑 방어] {ticker} {next_level}차 진입 시도")
+                    print(f"📉 [스캘핑 방어] {ticker} {next_level}차 진입 시도 (목표 간격: -{dynamic_dca_target*100:.2f}%)")
                     success, exec_price, exec_vol = worker.execute_buy(ticker, base_unit, self.MAX_BUDGET, pos['slot_index'], engine_name='SCALP')
                     if success:
                         safe_balances['KRW'] = safe_balances.get('KRW', 0.0) - (base_unit * 1.0005)

@@ -193,9 +193,54 @@ def get_dynamic_grid_step(ticker):
         return max(1.0, min(5.0, step_pct))
     except: return 1.5
 
+def get_dynamic_scalp_target(ticker):
+    """⚡ 스캘핑 변동성(ATR) 기반 동적 익절 목표가(%) 산출 (최소 0.5% ~ 최대 2.0%)"""
+    try:
+        df = pyupbit.get_ohlcv(ticker, interval="minute15", count=20)
+        if df is None or len(df) < 14: return 0.6
+        
+        atr = get_atr(df, 14)
+        current_price = df['close'].iloc[-1]
+        
+        # ATR을 현재가 대비 백분율(%)로 변환 후, 안전하게 절반 정도만 익절 폭으로 적용
+        step_pct = (atr / current_price) * 100 * 0.5
+        return max(0.5, min(2.0, step_pct))
+    except: return 0.6
+
+def get_dynamic_scalp_dca_target(ticker):
+    """⚡ 스캘핑 변동성(ATR) 기반 동적 물타기 간격(%) 산출 (최소 0.5% ~ 최대 1.5%)"""
+    try:
+        df = pyupbit.get_ohlcv(ticker, interval="minute15", count=20)
+        if df is None or len(df) < 14: return 1.0
+        
+        atr = get_atr(df, 14)
+        current_price = df['close'].iloc[-1]
+        
+        # 너무 깊지 않게 ATR의 60% 수준에서 물타기 선 설정
+        step_pct = (atr / current_price) * 100 * 0.6
+        return max(0.5, min(1.5, step_pct))
+    except: return 1.0
+
 # -------------------------------------------------------------
 # 🌍 시장 레지메 (Market Regime)
 # -------------------------------------------------------------
+
+def is_btc_dominance_increasing():
+    """🌍 비트코인 도미넌스(흡성대법) 추세 파악 (BTC 상승률 vs Top 알트코인 상승률 비교)"""
+    try:
+        import requests
+        tickers = pyupbit.get_tickers(fiat="KRW")[:21] # BTC 포함 21개 대장주
+        res = requests.get("https://api.upbit.com/v1/ticker", params={"markets": ",".join(tickers)}).json()
+        
+        btc_change = next((d.get('signed_change_rate', 0) for d in res if d['market'] == 'KRW-BTC'), 0)
+        alt_changes = [d.get('signed_change_rate', 0) for d in res if d['market'] != 'KRW-BTC']
+        
+        if not alt_changes: return False
+        alt_avg_change = sum(alt_changes) / len(alt_changes)
+        
+        # 비트코인 상승률이 알트 평균보다 크거나, 하락률이 적으면 도미넌스 상승 중으로 판단
+        return btc_change > alt_avg_change
+    except: return False
 
 def get_market_regime(current_regime):
     """🌍 전체 시장 상황 판단 (SUPER_BULL ~ ICE_AGE)"""
@@ -241,7 +286,11 @@ def get_market_regime(current_regime):
             elif breadth < 50: risk_score += 15    # 절반 이상이 역배열
             elif breadth > 75: risk_score -= 15    # 대다수가 정배열 (슈퍼 불장)
         
-        # 3. 리스크 점수 기반 레지메 결정 (0 ~ 100점 스케일 정상화)
+        # 3. 비트코인 도미넌스 상승 여부 (알트 약세장 필터)
+        if is_btc_dominance_increasing():
+            risk_score += 10 # 흡성대법 발생 시 알트 위주의 엔진에 리스크 스코어 패널티 부여
+
+        # 4. 리스크 점수 기반 레지메 결정 (0 ~ 100점 스케일 정상화)
         # 예: BTC 하락(30) + ETH 하락(20) + 브레스<30(30) = 80점 ➔ ICE_AGE 정상 발동!
         if risk_score <= 10: return "SUPER_BULL"
         elif risk_score <= 45: return "NORMAL"

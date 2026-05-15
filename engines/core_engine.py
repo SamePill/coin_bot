@@ -50,11 +50,24 @@ class CoreEngine(BaseEngine):
                 if time_elapsed_hours >= 24: dynamic_target = 0.02
                 elif time_elapsed_hours >= 12: dynamic_target = 0.035
 
-                if profit_rate >= dynamic_target:
-                    realized_krw = (curr_p - pos['buy']) * sell_vol
-                    print(f"📈 [CORE 수익 실현] {ticker} 동적 목표가({dynamic_target*100:.1f}%) 도달! 전량 익절")
-                    if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw, engine_name='CORE'):
-                        if key in bot_positions: del bot_positions[key]
+                # 💡 [V17.29] 스케일아웃(Scale-Out): 목표가 도달 시 절반을 팔아 수익을 확정하고, 나머지는 샹들리에에 맡김
+                if profit_rate >= dynamic_target and not pos.get('is_scaled_out', False):
+                    half_vol = sell_vol / 2.0
+                    remaining_krw = (sell_vol - half_vol) * curr_p
+                    
+                    if remaining_krw < 6000: # 최소 거래 대금 6,000원 방어
+                        realized_krw = (curr_p - pos['buy']) * sell_vol
+                        print(f"📈 [CORE 수익 실현] {ticker} 목표가({dynamic_target*100:.1f}%) 도달! 남은 금액이 적어 전량 매도")
+                        if worker.execute_sell(ticker, sell_vol, pos['slot_index'], profit_rate*100, realized_krw, engine_name='CORE'):
+                            if key in bot_positions: del bot_positions[key]
+                    else:
+                        realized_krw = (curr_p - pos['buy']) * half_vol
+                        print(f"⚖️ [CORE 스케일아웃] {ticker} 목표가({dynamic_target*100:.1f}%) 도달! 50% 수익 실현 및 추세 홀딩")
+                        if worker.execute_sell(ticker, half_vol, pos['slot_index'], profit_rate*100, realized_krw, engine_name='CORE', is_scale_out=True):
+                            with self.bot_positions_lock:
+                                bot_positions[key]['vol'] -= half_vol
+                                bot_positions[key]['invested_amount'] -= (pos['buy'] * half_vol)
+                                bot_positions[key]['is_scaled_out'] = True
                     continue
                     
                 # 💡 [박스권 탈출 로직 2] 가짜 돌파 휩쏘 타임컷: 6시간 경과 시 약수익/보합이면 강제 정리

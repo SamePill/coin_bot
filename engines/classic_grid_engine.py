@@ -91,45 +91,21 @@ class ClassicGridEngine(BaseEngine):
                                 del bot_positions[key]
                             continue
 
-                        res = self.upbit.sell_market_order(ticker, actual_sell_vol)
-                        if res:
-                            time.sleep(1)
-                            curr_p_after = pyupbit.get_current_price(ticker) or curr_p
-                            realized_krw = (curr_p_after - pos['buy']) * actual_sell_vol
-                            
-                            pos['vol'] -= actual_sell_vol
-                            pos['last_grid_price'] = curr_p_after
-                            
-                            current_slot_value = (pos['vol'] * curr_p_after) + pos['allocated_krw']
-                            slot_max_limit = self.BASE_SLOT_BUDGET * 1.05
-                            
-                            if current_slot_value > slot_max_limit:
-                                trade_type = "SELL_REBALANCE"
-                                noti_msg = f"⚖️ [🕸️ {self.ENGINE_NAME} 다이어트]\n- 슬롯 비대화 방지 수익금 회수"
-                                print(f"🕸️ [그리드 다이어트] {ticker} 초과수익 회수 완료 (+{realized_krw:,.0f}원)")
-                            else:
-                                pos['allocated_krw'] += (actual_sell_vol * curr_p_after)
-                                trade_type = "SELL_GRID_PART"
-                                noti_msg = f"[🕸️ {self.ENGINE_NAME} 부분 매도]"
-                                print(f"🕸️ [그리드 상단] {ticker} 부분 매도 완료 (+{realized_krw:,.0f}원)")
-                            
-                            db_manager.log_trade('CLASSIC_GRID', ticker, trade_type, curr_p_after, actual_sell_vol, profit_rate*100, realized_krw)
-                            conn = None
-                            try:
-                                conn = db_manager.get_connection()
-                                with conn.cursor() as cur:
-                                    sql = """
-                                        UPDATE current_positions 
-                                        SET volume = volume - %s, 
-                                            invested_amount = invested_amount - %s 
-                                        WHERE account_id = %s AND engine_name = %s AND ticker = %s AND slot_index = %s
-                                    """
-                                    cur.execute(sql, (actual_sell_vol, (pos['buy'] * actual_sell_vol), db_manager.ACCOUNT_ID, self.ENGINE_NAME, ticker, pos['slot_index']))
-                                conn.commit()
-                            except Exception as e:
-                                print(f"DB 부분 매도 업데이트 오류: {e}")
-                            finally:
-                                if conn: conn.close()
+                        # 💡 [V17.31] CLASSIC_GRID 상단 매도 시 스케일아웃(Scale-Out) 공통 로직 적용 (숨은 DB 커넥션 버그 동시 해결)
+                        realized_krw = (curr_p - pos['buy']) * actual_sell_vol
+                        if worker.execute_sell(ticker, actual_sell_vol, pos['slot_index'], profit_rate*100, realized_krw, engine_name='CLASSIC_GRID', is_scale_out=True):
+                            with self.bot_positions_lock:
+                                pos['vol'] -= actual_sell_vol
+                                pos['last_grid_price'] = curr_p
+                                
+                                current_slot_value = (pos['vol'] * curr_p) + pos['allocated_krw']
+                                slot_max_limit = self.BASE_SLOT_BUDGET * 1.05
+                                
+                                if current_slot_value > slot_max_limit:
+                                    print(f"🕸️ [그리드 다이어트] {ticker} 초과수익 회수 완료 (+{realized_krw:,.0f}원)")
+                                else:
+                                    pos['allocated_krw'] += (actual_sell_vol * curr_p)
+                                    print(f"🕸️ [그리드 상단] {ticker} 부분 매도 완료 (+{realized_krw:,.0f}원)")
 
                 elif curr_p <= pos['last_grid_price'] - step and curr_p > analyzer.get_ema200(ticker):
                     buy_krw = max(pos['allocated_krw'] * 0.15, 6000)

@@ -338,6 +338,28 @@ def delete_position(engine_name, ticker, slot_index=1):
             
 
 # -------------------------------------------------------------
+# 🧹 매도 시 포지션 부분 삭감 (Scale-Out 지원)
+# -------------------------------------------------------------
+def decrease_position(engine_name, ticker, sell_vol, slot_index=1):
+    """💡 부분 매도(Scale-Out) 시 DB 장부의 수량과 투자금을 삭감합니다."""
+    try:
+        conn = pool.connection()
+        with conn.cursor() as cur:
+            sql = """
+                UPDATE current_positions 
+                SET volume = volume - %s,
+                    invested_amount = invested_amount - (buy_price * %s)
+                WHERE account_id = %s AND engine_name = %s AND ticker = %s AND slot_index = %s
+            """
+            cur.execute(sql, (sell_vol, sell_vol, ACCOUNT_ID, engine_name, ticker, slot_index))
+        conn.commit()
+    except Exception as e:
+        print(f"❌ 포지션 부분 삭감 오류: {e}")
+    finally:
+        if 'conn' in locals() and conn: 
+            conn.close()
+
+# -------------------------------------------------------------
 # 🧹 DB 최적화: 오래된 매매 로그 자동 삭제
 # -------------------------------------------------------------
 def cleanup_old_trade_logs(retention_days=90):

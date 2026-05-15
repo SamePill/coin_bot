@@ -79,10 +79,11 @@ def execute_buy(ticker, amount, engine_budget, slot_index=1, engine_name='CORE')
         print(f"❌ [{engine_name}] 매수 실행 오류 ({ticker}): {e}")
     return False, 0, 0  # 💡 수정: 실패 시 단가, 수량 0 반환
 
-def execute_sell(ticker, volume, slot_index=1, profit_rate=0.0, realized_profit=0.0, engine_name='CORE'):
+def execute_sell(ticker, volume, slot_index=1, profit_rate=0.0, realized_profit=0.0, engine_name='CORE', is_scale_out=False):
     """
     💡 실제 매도 후 해당 슬롯의 포지션을 장부에서 제거합니다.
     - slot_index: 매도하려는 물량이 속한 슬롯 번호
+    - is_scale_out: 부분 익절(Scale-Out) 여부
     """
     try:
 
@@ -110,21 +111,25 @@ def execute_sell(ticker, volume, slot_index=1, profit_rate=0.0, realized_profit=
             time.sleep(1)
             curr_p = pyupbit.get_current_price(ticker)
             
-            # 2. 현장 장부(current_positions)에서 해당 슬롯 데이터 삭제
-            # 💡 [좀비 방지] 매도 완료 후 장부에서 완벽하게 파기
-            db_manager.delete_position(engine_name, ticker, slot_index)
+            # 2. 현장 장부(current_positions) 삭감 또는 파기
+            if is_scale_out:
+                db_manager.decrease_position(engine_name, ticker, volume, slot_index)
+                msg_type = "부분 익절(Scale-Out)"
+            else:
+                db_manager.delete_position(engine_name, ticker, slot_index)
+                msg_type = "전량 매도"
 
             # 3. 영구 로그(trade_logs)에 실현 수익 기록
-            db_manager.log_trade(engine_name, ticker, "SELL", curr_p, volume, profit_rate, realized_profit)
+            db_manager.log_trade(engine_name, ticker, f"SELL_{'PARTIAL' if is_scale_out else 'ALL'}", curr_p, volume, profit_rate, realized_profit)
             
-            print(f"✅ [{engine_name}] {ticker} 슬롯 {slot_index} 매도 완료 (수익률: {profit_rate:+.2f}%)")
+            print(f"✅ [{engine_name}] {ticker} 슬롯 {slot_index} {msg_type} 완료 (수익률: {profit_rate:+.2f}%)")
             # 💡 [추가] 매도 완료 알림 발송 (수익금 및 수익률 포함)
             if ENABLE_TRADE_NOTI:
                 icon = "📈" if realized_profit > 0 else "📉"
                 # p['engine'] 또는 ENGINE_TYPE 변수를 사용한다고 가정
                 symbol = "🏹" if engine_name == 'HUNTER' else "🕸️" if engine_name == 'CLASSIC_GRID' else "🛡️" if engine_name == 'CORE' else "⚡" if engine_name == 'SCALP' else "🎰" if engine_name == 'GRID' else "🤖"
                 send_telegram(
-                    f"{icon} [{symbol}{engine_name} 매도 완료]\n"
+                    f"{icon} [{symbol}{engine_name} {msg_type} 완료]\n"
                     f"- 종목: {ticker}\n"
                     f"- 실현 손익: {realized_profit:+,.0f}원\n"
                     f"- 수익률: {profit_rate:+.2f}%\n"
