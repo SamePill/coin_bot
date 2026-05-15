@@ -273,6 +273,7 @@ def apply_dynamic_allocation(regime):
 upbit = pyupbit.Upbit(UPBIT_ACCESS, UPBIT_SECRET)
 SEED_MONEY = 0
 bot_positions = {}
+active_engines = {} # 💡 [버그 수정] 컨트롤 타워 초기 호출을 위한 전역 변수 선언 위치 이동
 current_regime = "NORMAL"
 core_targets, hunter_targets = {}, {}
 top_grid_candidates = []
@@ -318,7 +319,6 @@ print(f"====================================================\n")
 # 💡 [핵심] 구동할 엔진 객체 생성 및 스레드 락 초기화
 # -------------------------------------------------------------
 bot_positions_lock = threading.Lock()
-active_engines = {}
 
 for engine in ACTIVE_ENGINES:
     if engine == 'CORE': active_engines['CORE'] = CoreEngine(upbit, bot_positions, bot_positions_lock)
