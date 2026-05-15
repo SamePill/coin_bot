@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  # 1. 공통 데이터 캐시 서버 (봇들을 껐다 켜도 데이터 유지)
+  aegis_redis:
+    image: redis:alpine
+    container_name: aegis_redis
+    restart: always
+    ports:
+      - "6379:6379"
+
+  # 2. 첫 번째 업비트 계정 봇
+  # hs
+  bot_account_1:
+    build: .
+    container_name: aegis_bot_1
+    restart: always
+    env_file: .env.bot1     # 💡 각 봇의 API키와 설정을 분리
+    depends_on:
+      - aegis_redis
+
+  # 3. 두 번째 업비트 계정 봇 (활성화하려면 주석 해제)
+  # lhy
+  bot_account_2:
+     build: .
+     container_name: aegis_bot_2
+     restart: always
+     env_file: .env.bot2
+     depends_on:
+       - aegis_redis

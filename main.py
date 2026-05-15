@@ -3,6 +3,8 @@ import time
 import threading
 import traceback  
 from datetime import datetime, timedelta
+import json
+import pickle
 import pandas as pd 
 import pyupbit
 from dotenv import load_dotenv
@@ -54,15 +56,48 @@ TOTAL_BUDGET = sum(ENGINE_BUDGETS[e] for e in ACTIVE_ENGINES if e in ENGINE_BUDG
 # 💡 [제거] 다중 컨테이너용 딜레이 로직 제거
 
 
+# 💡 [V17.20] 다중 서버 데이터 공유용 중앙 Redis 초기화 및 안전 모드(Safe Mode)
+USE_REDIS_CACHE = os.getenv('USE_REDIS_CACHE', 'False').lower() == 'true'
+REDIS_HOST = os.getenv('REDIS_HOST', 'aegis_redis')
+REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))
+REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', None)
+
+redis_client = None
+SAFE_MODE_DELAY = 0.0 # Redis 장애 시 API 폭주를 막기 위한 강제 지연 시간
+
+if USE_REDIS_CACHE:
+    try:
+        import redis
+        redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD, db=0)
+        redis_client.ping()
+        print(f"🟢 [시스템] 중앙 Redis 캐시 연결 성공! ({REDIS_HOST}:{REDIS_PORT})")
+    except Exception as e:
+        print(f"⚠️ [시스템] Redis 연결 실패! 안전 모드(Safe Mode) 발동. API 호출을 지연시킵니다: {e}")
+        USE_REDIS_CACHE = False
+        SAFE_MODE_DELAY = 1.5 # 다중 봇 동시 API 호출 WAF 방어용 1.5초 강제 지연
+
 # 💡 [V17.18] Monkey Patching (API 호출 초과 시 오토 힐링 추가)
 _original_get_current_price = pyupbit.get_current_price
 
 def _safe_get_current_price(ticker, limit_info=False, verbose=False):
+    # 1. 중앙 Redis 캐시 확인 (과도한 1초 이내 동일 호출 방어)
+    cache_key = f"price_{ticker}"
+    if USE_REDIS_CACHE and isinstance(ticker, str):
+        try:
+            cached = redis_client.get(cache_key)
+            if cached: return json.loads(cached.decode('utf-8'))
+        except: pass
+
     retries = 3
     for i in range(retries):
         try:
+            if SAFE_MODE_DELAY > 0: time.sleep(SAFE_MODE_DELAY)
             res = _original_get_current_price(ticker, limit_info, verbose)
             if res is not None: 
+                # 2. Redis에 저장 (2초 TTL 적용)
+                if USE_REDIS_CACHE and isinstance(ticker, str):
+                    try: redis_client.setex(cache_key, 2, json.dumps(res))
+                    except: pass
                 return res
         except Exception as e:
             err_msg = str(e)
@@ -136,18 +171,30 @@ def _safe_get_ohlcv(ticker, interval="day", count=200, to=None, period=0.1):
         if interval == "day": cache_duration = 3600
         elif interval == "minute60": cache_duration = 1800 # 💡 [추가] 60분봉도 30분 동안 캐싱
         
-        if cache_duration > 0 and cache_key in _ohlcv_cache:
-            cached_time, cached_df = _ohlcv_cache[cache_key]
-            if (now - cached_time).total_seconds() < cache_duration: 
-                return cached_df
+        if cache_duration > 0:
+            if USE_REDIS_CACHE:
+                try:
+                    cached = redis_client.get(f"ohlcv_{cache_key}")
+                    if cached: return pickle.loads(cached)
+                except: pass
+            else:
+                # Redis가 꺼져있거나 연결 실패 시 기존 로컬 캐시 사용
+                if cache_key in _ohlcv_cache:
+                    cached_time, cached_df = _ohlcv_cache[cache_key]
+                    if (now - cached_time).total_seconds() < cache_duration: 
+                        return cached_df
 
-    time.sleep(0.1) # 기본 API 속도 조절
+    time.sleep(0.1 + SAFE_MODE_DELAY) # 기본 API 속도 조절 + 안전 모드 지연
     for i in range(3):
         try:
             df = _original_get_ohlcv(ticker, interval=interval, count=count, to=to, period=period)
             if df is not None and not (isinstance(df, list) and len(df) == 0):
                 if cache_duration > 0:
-                    _ohlcv_cache[cache_key] = (now, df)
+                    if USE_REDIS_CACHE:
+                        try: redis_client.setex(f"ohlcv_{cache_key}", cache_duration, pickle.dumps(df))
+                        except: pass
+                    else:
+                        _ohlcv_cache[cache_key] = (now, df)
                 return df
         except Exception as e:
             err_msg = str(e)
