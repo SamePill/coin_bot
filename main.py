@@ -9,6 +9,13 @@ import pandas as pd
 import pyupbit
 from dotenv import load_dotenv
 
+# 💡 [전역 타임스탬프 패치] 모든 print 출력 메시지 앞에 현재 시간을 자동으로 붙여줍니다.
+import builtins
+_original_print = builtins.print
+def _timestamped_print(*args, **kwargs):
+    _original_print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]", *args, **kwargs)
+builtins.print = _timestamped_print
+
 # --- [1. 환경 변수 및 멀티 슬롯 설정 로드] ---
 load_dotenv()
 # ENGINE_TYPE = os.getenv('ENGINE_TYPE', 'CORE').upper() # 💡 [제거] 통합 엔진 모드에서는 불필요
