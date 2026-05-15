@@ -389,6 +389,9 @@ for engine in ACTIVE_ENGINES:
     elif engine == 'SCALP': active_engines['SCALP'] = ScalpEngine(upbit, bot_positions, bot_positions_lock)
     elif engine == 'CLASSIC_GRID': active_engines['CLASSIC_GRID'] = ClassicGridEngine(upbit, bot_positions, bot_positions_lock)
 
+    # 💡 [추가] 봇 구동 시 활성화된 엔진의 과거 일시 정지(Pause) 기록을 무시하고 무조건 가동(Resume) 상태로 초기화
+    db_manager.set_engine_pause_state(engine, False)
+
 
 def background_target_fetcher():
     global core_targets, hunter_targets, current_regime

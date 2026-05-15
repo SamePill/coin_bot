@@ -265,17 +265,27 @@ def set_engine_pause_state(engine_name, is_paused):
             # 테이블이 없으면 자동 생성
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS engine_status (
-                    engine_name VARCHAR(50) PRIMARY KEY,
-                    is_paused BOOLEAN DEFAULT FALSE
+                    account_id VARCHAR(50) NOT NULL DEFAULT 'MAIN',
+                    engine_name VARCHAR(50) NOT NULL,
+                    is_paused BOOLEAN DEFAULT FALSE,
+                    PRIMARY KEY (account_id, engine_name)
                 )
             """)
+            
+            # 💡 [마이그레이션] 구버전 단일 봇용 스키마에 account_id가 없으면 동적으로 추가
+            cur.execute("SHOW COLUMNS FROM engine_status LIKE 'account_id'")
+            if not cur.fetchone():
+                cur.execute("ALTER TABLE engine_status DROP PRIMARY KEY")
+                cur.execute("ALTER TABLE engine_status ADD COLUMN account_id VARCHAR(50) NOT NULL DEFAULT 'MAIN' FIRST")
+                cur.execute("ALTER TABLE engine_status ADD PRIMARY KEY(account_id, engine_name)")
+                
             # 상태 업데이트 (없으면 삽입, 있으면 수정)
             sql = """
-                INSERT INTO engine_status (engine_name, is_paused) 
-                VALUES (%s, %s) 
+                INSERT INTO engine_status (account_id, engine_name, is_paused) 
+                VALUES (%s, %s, %s) 
                 ON DUPLICATE KEY UPDATE is_paused = %s
             """
-            cur.execute(sql, (engine_name, is_paused, is_paused))
+            cur.execute(sql, (ACCOUNT_ID, engine_name, is_paused, is_paused))
         conn.commit()
     except Exception as e:
         print(f"❌ 상태 기록 오류: {e}")
@@ -289,8 +299,13 @@ def is_engine_paused(engine_name):
         conn = pool.connection()
     
         with conn.cursor(pymysql.cursors.DictCursor) as cur:
-            # 에러 방지를 위해 테이블 존재 여부를 무시하고 셀렉트 시도
-            cur.execute("SELECT is_paused FROM engine_status WHERE engine_name = %s", (engine_name,))
+            # 💡 계정별 독립 정지 상태 확인 (마이그레이션 전/후 호환 처리)
+            cur.execute("SHOW COLUMNS FROM engine_status LIKE 'account_id'")
+            if cur.fetchone():
+                cur.execute("SELECT is_paused FROM engine_status WHERE account_id = %s AND engine_name = %s", (ACCOUNT_ID, engine_name))
+            else:
+                cur.execute("SELECT is_paused FROM engine_status WHERE engine_name = %s", (engine_name,))
+                
             row = cur.fetchone()
             return bool(row['is_paused']) if row else False
     except:
