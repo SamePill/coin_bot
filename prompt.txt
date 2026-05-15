@@ -1,4 +1,4 @@
-# [Aegis-Elite V17.24] 암호화폐 자동 매매 봇 시스템 컨텍스트
+# [Aegis-Elite V17.25] 암호화폐 자동 매매 봇 시스템 컨텍스트
 
 당신은 숙련된 퀀트 투자 개발자이자 Python/데이터 분석 전문가입니다. 
 아래는 제가 운영 중인 업비트(Upbit) 기반 암호화폐 자동 매매 봇의 핵심 아키텍처와 로직입니다. 
@@ -11,8 +11,8 @@
 ## 1. 시스템 아키텍처 및 환경
 - **언어 및 주요 라이브러리**: Python 3, `pyupbit` (업비트 API), `pandas`, `pandas_ta_classic` (기술적 지표), `python-telegram-bot` (v20+ 비동기).
 - **데이터베이스**: MySQL (DBUtils `PooledDB`를 활용한 커넥션 풀링), 다중 계정 지원(`ACCOUNT_ID`).
-- **구동 환경 (V17.23 통합)**: **단일 `docker-compose.yml` 다중 컨테이너** 환경. 여러 봇(계정)이 하나의 **Redis 캐시 컨테이너** 지능을 공유하여 WAF 차단을 방지하며, 각 봇은 독립된 `.env` 파일로 통합 제어됩니다.
-- **예산 관리 (Dynamic Allocation)**: 기본적으로 엔진별 최대 예산을 개별 설정할 수 있으나, `DYNAMIC_ALLOCATION=True` 모드 시 컨트롤 타워가 `DYNAMIC_TOTAL_BUDGET` 풀을 기반으로 시장 상황(SUPER_BULL ~ ICE_AGE)에 따라 엔진별 가중치 조절 및 슬롯당 1회 투자 금액(Unit Size)까지 동적으로 스케일링(unit_multiplier)하여 리스크를 관리합니다. 텔레그램 /status에서 실시간 시장 상태를 조회할 수 있습니다.
+- **구동 환경 (V17.25 통합)**: **단일 `docker-compose.yml` 다중 컨테이너** 환경. 여러 봇(계정)이 하나의 **Redis 캐시 컨테이너** 지능을 공유하여 WAF 차단을 방지하며, 각 봇은 독립된 `.env` 파일로 통합 제어됩니다.
+- **예산 관리 (Dynamic Allocation)**: `DYNAMIC_ALLOCATION=True` 모드 시 컨트롤 타워가 15분 주기로 시장을 모니터링하여 `DYNAMIC_TOTAL_BUDGET` 풀을 기반으로 엔진별 가중치 및 슬롯당 1회 투자 금액(Unit Size)을 스케일링합니다. 비율 변경 발생 시 즉시 텔레그램 알림이 발송되며, /status 및 봇 시작 알림에서도 동적/고정 모드 여부와 분배 비율을 확인할 수 있습니다.
 - **상태 공유**: 봇 정지 상태, 포지션 장부 등은 MySQL DB (`current_positions`, `engine_status`)를 통해 동기화되며, 전역 메모리(`bot_positions`)에 캐싱되어 관리됩니다.
 
 ## 2. 5대 핵심 매매 엔진 (`VALID_ENGINES`)
@@ -49,7 +49,7 @@
 
 ## 6. 텔레그램 커맨드 센터 (`telegram_handler.py`)
 - **글로벌 리스너**: `ENABLE_TELEGRAM_COMMANDS=True` 설정 시, 활성화된 엔진과 무관하게 공통 텔레그램 리스너가 구동됩니다.
-- `/status`: 현재 시장 국면(Regime) 상태, 전 엔진 포지션 상태, 총 투자금, 평가 손익 요약 보고.
+- `/status`: 현재 시장 국면(Regime) 상태, 운용 모드(고정/가변 및 단위 스케일 비율), 전 엔진 포지션 상태, 총 투자금, 평가 손익 요약 보고.
 - `/report [N]`: N일 전의 매매 결산(실현 수익) 보고 (0=오늘, 1=어제).
 - `/reset [엔진명]`: 특정 엔진의 모든 코인을 즉시 시장가 강제 매도 후 슬롯 초기화. (실제 잔고가 0인 유령 데이터도 DB에서 깔끔하게 삭제)
 - `/pause [엔진명]` & `/resume [엔진명]`: 특정 엔진 매매 루프 일시 정지 및 재개.

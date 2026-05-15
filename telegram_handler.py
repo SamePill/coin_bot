@@ -14,6 +14,7 @@ _bot_positions = {}
 _bot_positions_lock = None
 _get_seed_money = None
 _get_current_regime = None  # 💡 [추가] 실시간 시장 상황(Regime) 참조용 함수
+_get_dynamic_info = None    # 💡 [추가] 컨트롤 타워(가변/고정) 상태 정보 참조용
 
 # 💡 [추가] 일시 정지된 엔진 목록을 저장하는 변수
 _paused_engines = set()
@@ -36,9 +37,14 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 💡 현재 시장 국면 가져오기
     regime = _get_current_regime() if _get_current_regime else "NORMAL"
     regime_desc = REGIME_SETTINGS.get(regime, {}).get("desc", f"❓ {regime}")
+    is_dynamic, unit_mult = _get_dynamic_info() if _get_dynamic_info else (False, 1.0)
     
     msg = f"📊 [{db_manager.ACCOUNT_ID} 실시간 운용 현황]\n"
     msg += f"🌍 현재 시장: {regime_desc}\n"
+    if is_dynamic:
+        msg += f"⚙️ 운용 모드: 지능형 가변 (1회 매수단위: {unit_mult*100:.0f}%)\n"
+    else:
+        msg += f"⚙️ 운용 모드: 고정 예산\n"
     msg += f"💰 금일 누적 수익: {total_today_profit:+,.0f}원\n"
     msg += "──────────────────\n"
 
@@ -321,16 +327,17 @@ def _run_bot():
     except Exception as e:
         print(f"🚨 [텔레그램 봇 구동 실패] {e}")
 
-def start_telegram_listener(positions_ref, lock_ref, seed_getter, regime_getter=None):
+def start_telegram_listener(positions_ref, lock_ref, seed_getter, regime_getter=None, dynamic_info_getter=None):
     """
     main.py에서 호출할 엔트리 포인트.
     실시간 메모리 참조를 전달받고 백그라운드 스레드에서 텔레그램 봇을 가동합니다.
     """
-    global _bot_positions, _bot_positions_lock, _get_seed_money, _get_current_regime
+    global _bot_positions, _bot_positions_lock, _get_seed_money, _get_current_regime, _get_dynamic_info
     _bot_positions = positions_ref
     _bot_positions_lock = lock_ref
     _get_seed_money = seed_getter
     _get_current_regime = regime_getter
+    _get_dynamic_info = dynamic_info_getter
     
     # 데몬 스레드로 가동 (메인 봇이 꺼지면 같이 꺼짐)
     threading.Thread(target=_run_bot, daemon=True).start()
