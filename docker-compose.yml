@@ -19,6 +19,7 @@ services:
     env_file: .env.bot0     # 💡 각 봇의 API키와 설정을 분리
     depends_on:
       - aegis_redis
+    network_mode: "host"
 
   # 두번째 업비트 계정 봇
   # hs
@@ -29,6 +30,7 @@ services:
     env_file: .env.bot1     # 💡 각 봇의 API키와 설정을 분리
     depends_on:
       - aegis_redis
+    network_mode: "host"
 
   # 세번째 업비트 계정 봇 (활성화하려면 주석 해제)
   # lhy
@@ -39,3 +41,4 @@ services:
      env_file: .env.bot2
      depends_on:
        - aegis_redis
+     network_mode: "host"
