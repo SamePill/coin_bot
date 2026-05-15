@@ -10,10 +10,10 @@ import pandas_ta_classic as ta
 # 🛡️ 공용 기술 지표 함수
 # -------------------------------------------------------------
 
-def get_adx(ticker, interval="minute60"):
+def get_adx(ticker):
     """💡 ADX(평균 방향성 지수) 계산 - 추세의 강도 측정 (25 이상 시 추세 발생)"""
     try:
-        df = pyupbit.get_ohlcv(ticker, interval=interval, count=50)
+        df = pyupbit.get_ohlcv(ticker, interval="minute60", count=50)
         if df is None or df.empty: return 0
         # pandas_ta_classic을 이용한 표준 ADX 계산
         adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
@@ -36,9 +36,9 @@ def get_atr(df, period=5):
             (df['high'] - df['close'].shift(1)).abs(), 
             (df['low'] - df['close'].shift(1)).abs()
         ], axis=1).max(axis=1)
-        return tr.rolling(window=period, min_periods=1).mean().iloc[-1]
+        return tr.rolling(window=period).mean().iloc[-1]
     except: 
-        return df['high'].iloc[-1] - df['low'].iloc[-1]
+        return df['high'].iloc[-2] - df['low'].iloc[-2]
 
 def get_ema200(ticker):
     """💡 EMA 200(장기 이평선) - 장기 추세 필터"""
@@ -97,19 +97,10 @@ def check_volume_spike(ticker):
 def get_chandelier_exit(ticker, pos_peak_price, current_regime):
     """🛡️ 샹들리에 청산가 계산 (추세 추종 익절 라인)"""
     try:
-        # 💡 RSI 및 ATR의 안정적인 계산을 위해 조회 캔들 수를 50개로 상향
-        df = pyupbit.get_ohlcv(ticker, interval="minute60", count=50)
+        df = pyupbit.get_ohlcv(ticker, interval="minute60", count=20)
         if df is None or len(df) < 20: return pos_peak_price * 0.95
-
         # 시장 상황(Regime)에 따라 변동성 허용 폭 조절
         multiplier = 3.0 if current_regime == "SUPER_BULL" else (1.5 if current_regime == "CAUTION" else 2.5)
-
-        # 💡 [개선] CAUTION 장세에서 RSI가 60 이상으로 과열 조짐이 보이면, 
-        # 추세가 완전히 꺾이기 전에 더 빠르게 탈출하도록 배수(Multiplier)를 1.0으로 타이트하게 축소합니다.
-        rsi_series = calc_rsi(df['close'])
-        if not rsi_series.empty and current_regime == "CAUTION" and rsi_series.iloc[-1] > 60:
-            multiplier = 1.0
-
         return pos_peak_price - (get_atr(df, 14) * multiplier)
     except: return pos_peak_price * 0.95
 
@@ -132,11 +123,10 @@ def check_hunter_dip_buy(ticker):
         curr_price = df_session['close'].iloc[-1]
         rsi = calc_rsi(df_session['close'], 14)
         
-        # VWAP 근처에서 RSI 반등 및 거래량 증가 확인 
-        # 💡 [안전성 개선] 현재 생성 중인 불안정한 캔들이 아닌 '직전 완성 캔들' 기준으로 반등 확정 판단
+        # VWAP 근처에서 RSI 반등 및 거래량 증가 확인
         cond1 = (current_vwap * 0.975 <= curr_price <= current_vwap * 1.025)
-        cond2 = (rsi.iloc[-3] < 40 and rsi.iloc[-2] > rsi.iloc[-3])
-        cond3 = df_session['volume'].iloc[-2] > df_session['volume'].iloc[-3]
+        cond2 = (rsi.iloc[-2] < 40 and rsi.iloc[-1] > rsi.iloc[-2])
+        cond3 = df_session['volume'].iloc[-1] > df_session['volume'].iloc[-2]
         
         return cond1 and cond2 and cond3
     except: return False
@@ -144,10 +134,8 @@ def check_hunter_dip_buy(ticker):
 def is_pin_bar(ticker):
     """🏹 아래꼬리 핀바 확인 (바닥 지지력 확인)"""
     try:
-        # 💡 [안전성 개선] 진행 중인 캔들이 아닌 '직전 완성 캔들'을 가져와 형태 확정
-        df = pyupbit.get_ohlcv(ticker, interval="minute15", count=2)
-        if df is None or len(df) < 2: return False
-        o, h, l, c = df.iloc[-2][['open', 'high', 'low', 'close']]
+        df = pyupbit.get_ohlcv(ticker, interval="minute15", count=1)
+        o, h, l, c = df.iloc[-1][['open', 'high', 'low', 'close']]
         body = abs(c - o)
         lower_tail = min(o, c) - l
         # 몸통 대비 아래꼬리가 2배 이상 길고 캔들 전체의 50% 이상일 때
@@ -157,40 +145,10 @@ def is_pin_bar(ticker):
 def get_structural_stop(ticker):
     """🏹 직전 저점 기반 구조적 손절가 산출"""
     try:
-        # 💡 샘플 수를 20개로 늘려 더 신뢰도 높은 지지선을 찾습니다.
-        df = pyupbit.get_ohlcv(ticker, interval="minute15", count=20)
-        if df is None or len(df) < 10: return 0
-        return df['low'].min() * 0.992 # 0.8% 버퍼
+        df = pyupbit.get_ohlcv(ticker, interval="minute5", count=4)
+        if df is None or len(df) < 4: return 0
+        return df['low'].iloc[-4:-1].min()
     except: return 0
-
-# -------------------------------------------------------------
-# ⚡ SCALP 엔진 전용 필터
-# -------------------------------------------------------------
-
-def get_volatility_factor(ticker):
-    """⚡ [SCALP] ATR 기반 동적 트레일링 스탑 폭 계산"""
-    try:
-        # 5분봉 기준 최근 변동성 측정 (캐싱 적용 권장)
-        df = pyupbit.get_ohlcv(ticker, interval="minute5", count=10)
-        if df is None or len(df) < 5: return 0.002
-        
-        atr = get_atr(df, 5)
-        price = df['close'].iloc[-1]
-        
-        # ATR 비율의 50%를 추적 오차(Callback)로 사용
-        # 노이즈에 의한 조기 매도 방지를 위해 0.1% ~ 0.5% 사이로 제한
-        ratio = (atr / price) * 0.5
-        return max(0.001, min(0.005, ratio))
-    except:
-        return 0.002
-
-def get_rsi_value(ticker, interval="minute5"):
-    """💡 실시간 RSI 수치 조회"""
-    try:
-        df = pyupbit.get_ohlcv(ticker, interval=interval, count=50)
-        if df is None or df.empty: return 50
-        return calc_rsi(df['close']).iloc[-1]
-    except: return 50
 
 # -------------------------------------------------------------
 # 🕸️ GRID 엔진 전용 필터
@@ -213,34 +171,6 @@ def get_grid_suitability_score(ticker):
         return score
     except: return 0
 
-def get_dynamic_grid_step(ticker):
-    """🕸️ 그리드 간격(Step) 동적 계산 (변동성 기반)"""
-    try:
-        df = pyupbit.get_ohlcv(ticker, interval="day", count=7)
-        if df is not None and len(df) > 1:
-            amplitudes = (df['high'] - df['low']) / df['close'] * 100
-            avg_volatility = amplitudes.mean()
-            
-            if avg_volatility >= 5.0: return 2.0   
-            elif avg_volatility >= 2.0: return 1.0 
-            else: return 0.8                       
-    except: pass
-    return 1.0
-
-def get_pyramiding_weight(buy_level, current_regime):
-    """💡 시장 국면에 따른 물타기/불타기 가중치 산출"""
-    if current_regime in ["SUPER_BULL", "NORMAL"]:
-        if buy_level <= 1: return 2.0     
-        elif buy_level == 2: return 1.0   
-        elif buy_level >= 3: return 0.0   
-    else:
-        if buy_level <= 1: return 1.0     
-        elif buy_level == 2: return 2.0   
-        elif buy_level == 3: return 4.0   
-        elif buy_level == 4: return 6.0   
-        elif buy_level >= 5: return 8.0   
-    return 1.0
-
 def get_grid_step(ticker):
     """🕸️ 그리드 간격(Step) 계산"""
     try:
@@ -259,28 +189,50 @@ def get_market_regime(current_regime):
         tickers = pyupbit.get_tickers(fiat="KRW")
         risk_score = 0
         
-        # 비트코인/이더리움 이평선 정배열 확인
-        btc_df = pyupbit.get_ohlcv("KRW-BTC", interval="day", count=6)
-        eth_df = pyupbit.get_ohlcv("KRW-ETH", interval="day", count=6)
+        # 1. 비트코인/이더리움 추세 확인 (20일 생명선 및 5일 단기선)
+        btc_df = pyupbit.get_ohlcv("KRW-BTC", interval="day", count=25)
+        eth_df = pyupbit.get_ohlcv("KRW-ETH", interval="day", count=25)
         
-        if btc_df is not None and pyupbit.get_current_price("KRW-BTC") < btc_df['close'].rolling(5).mean().iloc[-1]: risk_score += 25
-        if eth_df is not None and pyupbit.get_current_price("KRW-ETH") < eth_df['close'].rolling(5).mean().iloc[-1]: risk_score += 25
+        if btc_df is not None and not btc_df.empty:
+            btc_current = btc_df['close'].iloc[-1]
+            btc_ma20 = btc_df['close'].rolling(20).mean().iloc[-1]
+            btc_ma5 = btc_df['close'].rolling(5).mean().iloc[-1]
+            
+            if btc_current < btc_ma20: risk_score += 30 # 중기 추세 꺾임 (치명적)
+            elif btc_current < btc_ma5: risk_score += 15 # 단기 조정을 받음
+            
+            # 💡 [추가] 비트코인 급락(변동성) 감지 - 당일 고점 대비 -5% 이상 하락 시 패닉 가중치 부여
+            if (btc_current - btc_df['high'].iloc[-1]) / btc_df['high'].iloc[-1] < -0.05:
+                risk_score += 20
+                
+        if eth_df is not None and not eth_df.empty:
+            eth_current = eth_df['close'].iloc[-1]
+            eth_ma20 = eth_df['close'].rolling(20).mean().iloc[-1]
+            if eth_current < eth_ma20: risk_score += 20 # 알트 대장 추세 꺾임
         
-        # 상위 30종목 정배열 비율 (마켓 브레스)
+        # 2. 마켓 브레스 (상위 30종목 중 20일 생명선 상회 종목 비율)
         uptrend_count = 0
+        valid_count = 0
         for t in tickers[:30]:
-            df = pyupbit.get_ohlcv(t, interval="day", count=21)
-            time.sleep(0.3) # 💡 [API 차단 방지] 다중 컨테이너 고려 0.3초 추가 완화
-            if df is not None and pyupbit.get_current_price(t) >= df['close'].mean():
-                uptrend_count += 1
+            df = pyupbit.get_ohlcv(t, interval="day", count=25)
+            time.sleep(0.1) # Redis 캐시 적용으로 속도 대폭 단축
+            if df is not None and len(df) >= 20:
+                valid_count += 1
+                if df['close'].iloc[-1] >= df['close'].rolling(20).mean().iloc[-1]:
+                    uptrend_count += 1
         
-        breadth = (uptrend_count / 30) * 100
-        if breadth < 40: risk_score += 30
-        elif breadth > 70: risk_score -= 10
+        if valid_count > 0:
+            breadth = (uptrend_count / valid_count) * 100
+            if breadth < 30: risk_score += 30      # 알트코인 시장 전체가 침체
+            elif breadth < 50: risk_score += 15    # 절반 이상이 역배열
+            elif breadth > 75: risk_score -= 15    # 대다수가 정배열 (슈퍼 불장)
         
-        # 리스크 점수 기반 레지메 결정
-        if risk_score <= 15: return "SUPER_BULL"
-        elif risk_score <= 50: return "NORMAL"
-        elif risk_score <= 80: return "CAUTION"
+        # 3. 리스크 점수 기반 레지메 결정 (0 ~ 100점 스케일 정상화)
+        # 예: BTC 하락(30) + ETH 하락(20) + 브레스<30(30) = 80점 ➔ ICE_AGE 정상 발동!
+        if risk_score <= 10: return "SUPER_BULL"
+        elif risk_score <= 45: return "NORMAL"
+        elif risk_score < 80: return "CAUTION"
         else: return "ICE_AGE"
-    except: return current_regime
+    except Exception as e: 
+        print(f"⚠️ 시장 국면 파악 오류: {e}")
+        return current_regime

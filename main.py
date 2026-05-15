@@ -221,6 +221,50 @@ from engines.grid_engine import GridEngine
 from engines.scalp_engine import ScalpEngine
 from engines.classic_grid_engine import ClassicGridEngine
 
+# -------------------------------------------------------------
+# 🧠 [컨트롤 타워] 시장 상황(Regime) 기반 예산 동적 분배기
+# -------------------------------------------------------------
+def apply_dynamic_allocation(regime):
+    """시장의 파도에 따라 밸브를 열고 닫아 엔진별 예산을 재조정합니다."""
+    global TOTAL_BUDGET, DYNAMIC_TOTAL_BUDGET
+    if not DYNAMIC_ALLOCATION or DYNAMIC_TOTAL_BUDGET <= 0:
+        return
+
+    # 시장 국면별 5대 엔진의 이상적인 가중치, 전체 예산 사용률(usage), 💡 1회 투자 총알 크기 비율(unit_multiplier)
+    allocation_map = {
+        "SUPER_BULL": {"CORE": 0.4, "SCALP": 0.3, "GRID": 0.2, "CLASSIC_GRID": 0.1, "HUNTER": 0.0, "usage": 1.0, "unit_multiplier": 1.2},
+        "NORMAL":     {"GRID": 0.4, "SCALP": 0.3, "CORE": 0.1, "HUNTER": 0.1, "CLASSIC_GRID": 0.1, "usage": 1.0, "unit_multiplier": 1.0},
+        "CAUTION":    {"HUNTER": 0.4, "CLASSIC_GRID": 0.3, "GRID": 0.2, "SCALP": 0.1, "CORE": 0.0, "usage": 0.6, "unit_multiplier": 0.7},
+        "ICE_AGE":    {"HUNTER": 0.5, "CLASSIC_GRID": 0.5, "GRID": 0.0, "SCALP": 0.0, "CORE": 0.0, "usage": 0.3, "unit_multiplier": 0.5}
+    }
+    
+    weights = allocation_map.get(regime, allocation_map["NORMAL"])
+    unit_mult = weights.get("unit_multiplier", 1.0)
+    
+    # 💡 [핵심] worker.py에 선언된 전역 변수를 실시간 업데이트하여 총알(Unit Size) 크기 스케일링
+    worker.DYNAMIC_UNIT_MULTIPLIER = unit_mult
+    
+    # 사용자가 켠 엔진들 사이에서만 가중치를 100%로 꽉 차게 재조정(정규화)
+    active_weight_sum = sum(weights.get(e, 0) for e in ACTIVE_ENGINES)
+    if active_weight_sum == 0: return
+        
+    # 리스크 관리를 위해 빙하기에는 전체 예산의 일부(usage)만 사용
+    actual_budget = DYNAMIC_TOTAL_BUDGET * weights.get("usage", 1.0)
+    TOTAL_BUDGET = actual_budget
+    
+    print(f"\n🧠 [컨트롤 타워] 시장 국면({regime}) 기반 예산 재조정 발동!")
+    print(f"💵 가용 예산: {actual_budget:,.0f}원 (총 풀의 {weights.get('usage', 1.0)*100:.0f}%)")
+    print(f"💉 투자 단위(Unit Size) 스케일링: {unit_mult*100:.0f}% 적용")
+
+    for eng in ACTIVE_ENGINES:
+        norm_w = weights.get(eng, 0) / active_weight_sum
+        new_budget = actual_budget * norm_w
+        ENGINE_BUDGETS[eng] = new_budget
+        if eng in active_engines:
+            active_engines[eng].MAX_BUDGET = new_budget
+        icon = "🟢" if new_budget > 0 else "🔴"
+        print(f"  - {icon} {eng:12}: {new_budget:>10,.0f}원 ({norm_w*100:>4.1f}%)")
+
 # --- [전역 변수 초기화] ---
 upbit = pyupbit.Upbit(UPBIT_ACCESS, UPBIT_SECRET)
 SEED_MONEY = 0
@@ -238,8 +282,13 @@ last_regime_check_time = None
 
 last_grid_eval_time = datetime.now() - timedelta(hours=2) # 💡 즉시 실행되도록 초기값 조정
 
+# 💡 구동 시 즉시 현재 시장 상황을 스캔하고 컨트롤 타워 가동
+current_regime = analyzer.get_market_regime("NORMAL")
+apply_dynamic_allocation(current_regime)
+
 print(f"====================================================")
-print(f"🏆 [시스템] Aegis-Elite V17.18 통합 엔진 패치 가동 (활성: {', '.join(ACTIVE_ENGINES)})")
+print(f"🏆 [시스템] Aegis-Elite V17.21 통합 컨트롤 타워 가동 (활성: {', '.join(ACTIVE_ENGINES)})")
+print(f"🧠 [지능형 동적 분배 모드]: {'활성화 ✅' if DYNAMIC_ALLOCATION else '비활성화 (고정 예산) ❌'}")
 for engine in ACTIVE_ENGINES:
     symbol = "🏹" if engine == 'HUNTER' else "�️" if engine == 'CLASSIC_GRID' else "🛡️" if engine == 'CORE' else "⚡" if engine == 'SCALP' else "🎰" if engine == 'GRID' else "🤖"
     if engine == 'GRID':
@@ -366,7 +415,8 @@ ENABLE_TELEGRAM_COMMANDS = os.getenv('ENABLE_TELEGRAM_COMMANDS', 'False').lower(
 
 if ENABLE_TELEGRAM_COMMANDS:
     # 💡 도커 컴포즈에서 True로 설정된 단 하나의 엔진만 이 코드를 실행합니다.
-    telegram_handler.start_telegram_listener(bot_positions, bot_positions_lock, lambda: TOTAL_BUDGET)
+    # 💡 [V17.23] 현재 시장 상황(current_regime)을 텔레그램에서도 참조할 수 있도록 넘겨줍니다.
+    telegram_handler.start_telegram_listener(bot_positions, bot_positions_lock, lambda: TOTAL_BUDGET, lambda: current_regime)
     print(f"🤖 [공통] 텔레그램 명령 리스너 가동 시작!")
 else:
     print(f"🔇 [공통] 텔레그램 명령 수신을 스킵합니다.")
@@ -427,18 +477,28 @@ while True:
                 total_profit = db_manager.get_total_realized_profit()
                 if total_profit > 0 and TOTAL_BUDGET > 0:
                     reinvest_pool = total_profit * COMPOUND_RATE
-                    report_msg += f"\n\n🔄 [스노우볼 복리] 누적 수익 반영\n- 총 잉여 예산 {reinvest_pool:,.0f}원 추가 확보!"
-                    for eng_name, eng_obj in active_engines.items():
-                        base_budget = ENGINE_BUDGETS.get(eng_name, 0)
-                        weight = base_budget / TOTAL_BUDGET # 기존 예산 비율만큼 쪼개서 분배
-                        eng_obj.MAX_BUDGET = base_budget + (reinvest_pool * weight)
+                    
+                    if DYNAMIC_ALLOCATION:
+                        base_pool = float(os.getenv('DYNAMIC_TOTAL_BUDGET', str(TOTAL_BUDGET)))
+                        DYNAMIC_TOTAL_BUDGET = base_pool + reinvest_pool
+                        report_msg += f"\n\n🔄 [지능형 복리] 누적 수익 반영\n- 컨트롤 타워 풀 예산 {reinvest_pool:,.0f}원 증가!"
+                        apply_dynamic_allocation(current_regime)
+                    else:
+                        report_msg += f"\n\n🔄 [스노우볼 복리] 누적 수익 반영\n- 총 잉여 예산 {reinvest_pool:,.0f}원 추가 확보!"
+                        for eng_name, eng_obj in active_engines.items():
+                            base_budget = ENGINE_BUDGETS.get(eng_name, 0)
+                            weight = base_budget / TOTAL_BUDGET 
+                            eng_obj.MAX_BUDGET = base_budget + (reinvest_pool * weight)
             
             send_telegram(report_msg)
             last_daily_report_hour = now.hour # 💡 해당 시간 발송 완료 기록
 
         # 💡 [수정] 단일 컨테이너 환경이므로 분산 로직 제거
         if now.minute % 15 == 0 and (last_regime_check_time is None or (now - last_regime_check_time).total_seconds() > 60):
-            current_regime = analyzer.get_market_regime(current_regime)
+            new_regime = analyzer.get_market_regime(current_regime)
+            if new_regime != current_regime:
+                current_regime = new_regime
+                apply_dynamic_allocation(current_regime) # 💡 [컨트롤 타워] 시장 변화 감지 시 즉시 예산 재분배!
             last_regime_check_time = now
 
         # 💡 [추가] 4시간마다 CORE/HUNTER 타겟 스캔 (50분 언저리에 실행하여 API 몰림 방지)

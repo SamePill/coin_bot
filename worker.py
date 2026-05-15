@@ -4,6 +4,12 @@ import pyupbit
 import db_manager
 from config import UPBIT_ACCESS, UPBIT_SECRET, send_telegram, ENABLE_TRADE_NOTI
 
+# 💡 [V17.22] 지능형 밸브: 슬롯당 투자 단위(Unit Size) 스케일링 변수
+DYNAMIC_UNIT_MULTIPLIER = 1.0 
+
+# --- [도커 환경 변수 로드] ---
+# MAX_BUDGET = float(os.getenv('MAX_BUDGET', 0)) # 💡 [제거] 엔진별 예산 관리를 위해 전역 변수 제거
+
 # 업비트 객체 초기화
 upbit = pyupbit.Upbit(UPBIT_ACCESS, UPBIT_SECRET)
 
@@ -12,7 +18,14 @@ def execute_buy(ticker, amount, engine_budget, slot_index=1, engine_name='CORE')
     💡 예산 한도를 체크한 후 실제 매수를 집행하고 슬롯별로 장부에 기록합니다.
     - slot_index: 다중 슬롯 운영 시 식별 번호 (기본값 1)
     """
+    global DYNAMIC_UNIT_MULTIPLIER
     try:
+        # 💡 [지능형 컨트롤 타워] 시장 장세에 따라 진입 금액(UNIT_SIZE) 동적 조절
+        original_amount = amount
+        if DYNAMIC_UNIT_MULTIPLIER != 1.0:
+            amount = amount * DYNAMIC_UNIT_MULTIPLIER
+            amount = max(5500.0, amount)  # 업비트 최소 주문 금액(5,000원) + 수수료 여유분 방어
+            
         # 1. DB 장부에서 이 엔진(CORE/HUNTER/GRID)이 현재 점유 중인 총 자산 확인
         already_used = db_manager.get_engine_invested_total(engine_name)
         
@@ -22,6 +35,10 @@ def execute_buy(ticker, amount, engine_budget, slot_index=1, engine_name='CORE')
             print("💤 5분간 대기 후 다시 확인합니다...")
             time.sleep(300)  # ⬅️ 300초(5분) 동안 루프를 멈춤
             return False, 0, 0  # 💡 수정: 실패 시 단가, 수량 0 반환
+            
+        # 💡 [로그 출력] 스케일링이 실제로 적용되어 매수가 들어갈 때만 콘솔에 알림
+        if DYNAMIC_UNIT_MULTIPLIER != 1.0 and abs(original_amount - amount) > 10:
+            print(f"⚖️ [지능형 밸브] {engine_name} 투자 단위 조절: {original_amount:,.0f}원 ➔ {amount:,.0f}원 ({DYNAMIC_UNIT_MULTIPLIER*100:.0f}%)")
 
         # 3. 업비트 실제 시장가 매수 주문
         res = upbit.buy_market_order(ticker, amount)

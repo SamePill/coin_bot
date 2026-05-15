@@ -53,7 +53,30 @@ def log_trade(engine_name, market, side, price, volume, profit_rate=0.0, realize
             conn.close()
 
 # -------------------------------------------------------------
-# 🗄️ 현장 장부 관리 (current_positions) - 다중 슬롯 및 계정 대응
+# 💰 누적 실현 수익 조회 (복리 자동 재투자용)
+# -------------------------------------------------------------
+def get_total_realized_profit():
+    """💡 내 계정의 누적 실현 수익금 전체 합계를 조회합니다."""
+    conn = None
+    try:
+        conn = pool.connection()
+        with conn.cursor() as cur:
+            sql = """
+                SELECT SUM(realized_profit) 
+                FROM trade_logs 
+                WHERE account_id = %s AND side LIKE 'SELL%%'
+            """
+            cur.execute(sql, (ACCOUNT_ID,))
+            result = cur.fetchone()
+            return float(result[0]) if result and result[0] is not None else 0.0
+    except Exception as e:
+        print(f"❌ 누적 수익 조회 오류: {e}")
+        return 0.0
+    finally:
+        if conn: conn.close()
+
+# -------------------------------------------------------------
+# �️ 현장 장부 관리 (current_positions) - 다중 슬롯 및 계정 대응
 # -------------------------------------------------------------
 def get_engine_invested_total(engine_name):
     """💡 특정 계정의 특정 엔진이 사용 중인 총 투자 원금 조회"""
