@@ -248,6 +248,23 @@ def get_dynamic_scalp_dca_target(ticker):
         return max(0.5, min(1.5, step_pct))
     except: return 1.0
 
+def get_pyramiding_weight(next_level, current_regime):
+    """🕸️ 시장 국면 및 진입 차수에 따른 피라미딩(가중치) 배수 산출"""
+    if current_regime == "SUPER_BULL":
+        # 불장: 초반에 강하게 진입, 물릴수록 비중 축소 (추매 제한)
+        weights = {1: 1.5, 2: 1.0, 3: 0.5, 4: 0.2, 5: 0.0}
+    elif current_regime == "CAUTION":
+        # 하락 경계장: 초반에 적게 진입, 물릴수록 비중 확대 (평단가 방어)
+        weights = {1: 0.5, 2: 1.0, 3: 1.5, 4: 2.0, 5: 2.5}
+    elif current_regime == "ICE_AGE":
+        # 빙하기: 초반 진입 최소화, 깊이 물릴 때만 강하게 투입
+        weights = {1: 0.3, 2: 0.5, 3: 1.5, 4: 2.5, 5: 4.0}
+    else:
+        # NORMAL: 기본 1배수 정량 투입
+        weights = {1: 1.0, 2: 1.0, 3: 1.0, 4: 1.0, 5: 1.0}
+        
+    return weights.get(next_level, 1.0)
+
 # -------------------------------------------------------------
 # 🌍 시장 레지메 (Market Regime)
 # -------------------------------------------------------------
