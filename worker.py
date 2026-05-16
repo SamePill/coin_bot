@@ -13,7 +13,7 @@ DYNAMIC_UNIT_MULTIPLIER = 1.0
 # 업비트 객체 초기화
 upbit = pyupbit.Upbit(UPBIT_ACCESS, UPBIT_SECRET)
 
-def execute_buy(ticker, amount, engine_budget, slot_index=1, engine_name='CORE'):
+def execute_buy(ticker, amount, engine_budget, slot_index=1, engine_name='CORE', krw_balance=None):
     """
     💡 예산 한도를 체크한 후 실제 매수를 집행하고 슬롯별로 장부에 기록합니다.
     - slot_index: 다중 슬롯 운영 시 식별 번호 (기본값 1)
@@ -32,11 +32,17 @@ def execute_buy(ticker, amount, engine_budget, slot_index=1, engine_name='CORE')
         if amount > available_budget:
             amount = available_budget  # 남은 예산 한도 내로 금액을 영끌하여 강제 축소
             
+        # 💡 [V17.34 잔고 부족 방어] 실제 업비트 지갑의 원화(KRW) 잔고에 맞춰 최종 영끌 스위핑
+        if krw_balance is not None:
+            max_krw = krw_balance / 1.0005
+            if amount > max_krw:
+                amount = max_krw
+                
         amount = max(5500.0, amount)  # 업비트 최소 주문 금액 방어
         
-        # 5500원 하한선 보정 후에도 예산을 심하게(5% 이상) 초과한다면 완전 고갈로 판단
-        if already_used + amount > engine_budget * 1.05:
-            print(f"⚠️ [{engine_name}] 가용 예산 완전 고갈 (남은 예산: {available_budget:,.0f}원)")
+        # 5500원 하한선 보정 후에도 예산을 초과하거나, 실제 잔고가 부족하다면 매수 포기
+        if already_used + amount > engine_budget * 1.05 or (krw_balance is not None and amount * 1.0005 > krw_balance):
+            print(f"⚠️ [{engine_name}] 가용 예산/잔고 완전 고갈 (남은 예산: {available_budget:,.0f}원 / 잔고: {krw_balance if krw_balance else 0:,.0f}원)")
             time.sleep(60) # 과부하 방지용 짧은 대기
             return False, 0, 0  # 💡 수정: 실패 시 단가, 수량 0 반환
             

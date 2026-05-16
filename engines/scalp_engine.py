@@ -95,7 +95,7 @@ class ScalpEngine(BaseEngine):
                 if max_affordable >= 5500:
                     self.budget_lock_notified = False
                     print(f"📉 [스캘핑 방어] {ticker} {next_level}차 진입 시도 (목표 간격: -{dynamic_dca_target*100:.2f}%)")
-                    success, exec_price, exec_vol = worker.execute_buy(ticker, base_unit, self.MAX_BUDGET, pos['slot_index'], engine_name='SCALP')
+                    success, exec_price, exec_vol = worker.execute_buy(ticker, base_unit, self.MAX_BUDGET, pos['slot_index'], engine_name='SCALP', krw_balance=krw_balance)
                     if success:
                         safe_balances['KRW'] = safe_balances.get('KRW', 0.0) - (base_unit * 1.0005)
                         time.sleep(1.5)
@@ -144,7 +144,7 @@ class ScalpEngine(BaseEngine):
                     existing_slots = [p['slot_index'] for p in bot_positions.values() if p['ticker'] == ticker and p['engine'] == 'SCALP']
                     while new_slot_idx in existing_slots: new_slot_idx += 1
 
-                    success, exec_price, exec_vol = worker.execute_buy(ticker, unit_size, self.MAX_BUDGET, new_slot_idx, engine_name='SCALP')
+                    success, exec_price, exec_vol = worker.execute_buy(ticker, unit_size, self.MAX_BUDGET, new_slot_idx, engine_name='SCALP', krw_balance=krw_balance)
                     if success:
                         safe_balances['KRW'] = safe_balances.get('KRW', 0.0) - (unit_size * 1.0005)
                         time.sleep(1.5) 

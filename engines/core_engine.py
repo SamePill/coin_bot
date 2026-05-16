@@ -114,7 +114,7 @@ class CoreEngine(BaseEngine):
                         while new_slot_idx in [p['slot_index'] for p in bot_positions.values() if p['ticker'] == ticker]: new_slot_idx += 1
                         
                         print(f"🚀 [CORE 신규 진입] {ticker} 강력한 추세 돌파 포착!")
-                        success, exec_price, exec_vol = worker.execute_buy(ticker, base_invest, self.MAX_BUDGET, new_slot_idx, engine_name='CORE')
+                        success, exec_price, exec_vol = worker.execute_buy(ticker, base_invest, self.MAX_BUDGET, new_slot_idx, engine_name='CORE', krw_balance=krw_balance)
                         if success:
                             safe_balances['KRW'] = safe_balances.get('KRW', 0.0) - (base_invest * 1.0005)
                             key = f"{ticker}_slot_{new_slot_idx}"

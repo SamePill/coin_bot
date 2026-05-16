@@ -66,7 +66,8 @@ class GridEngine(BaseEngine):
                 if current_regime == "SUPER_BULL" and analyzer.check_volume_spike(ticker):
                     if 0.015 < profit_rate < 0.03 and pos.get('buy_level', 1) == 1:
                         print(f"🔥 [불타기] {ticker} 추세 돌파 감지! 비중 확대")
-                        success, exec_p, exec_v = worker.execute_buy(ticker, self.UNIT_LIST[0] * 1.5, self.MAX_BUDGET, pos['slot_index'], engine_name='GRID')
+                        krw_balance = safe_balances.get('KRW', 0.0)
+                        success, exec_p, exec_v = worker.execute_buy(ticker, self.UNIT_LIST[0] * 1.5, self.MAX_BUDGET, pos['slot_index'], engine_name='GRID', krw_balance=krw_balance)
                         if success:
                             safe_balances['KRW'] = safe_balances.get('KRW', 0.0) - (self.UNIT_LIST[0] * 1.5 * 1.0005)
                             new_vol = pos['vol'] + exec_v
@@ -103,7 +104,7 @@ class GridEngine(BaseEngine):
                     self.budget_lock_notified = False
                     print(f"📉 [하락 방어] {ticker} {next_level}차 진입 시도 ({invest_amount:,.0f}원 / {weight}배 가중치)")
                     
-                    success, exec_price, exec_vol = worker.execute_buy(ticker, invest_amount, self.MAX_BUDGET, pos['slot_index'], engine_name='GRID')
+                    success, exec_price, exec_vol = worker.execute_buy(ticker, invest_amount, self.MAX_BUDGET, pos['slot_index'], engine_name='GRID', krw_balance=krw_balance)
                     if success:
                         safe_balances['KRW'] = safe_balances.get('KRW', 0.0) - (invest_amount * 1.0005)
                         time.sleep(1.5) 
@@ -160,7 +161,7 @@ class GridEngine(BaseEngine):
                     new_slot_idx = 1
                     while new_slot_idx in existing_slots: new_slot_idx += 1
                     
-                    success, exec_price, exec_vol = worker.execute_buy(ticker, unit_size, self.MAX_BUDGET, new_slot_idx, engine_name='GRID')
+                    success, exec_price, exec_vol = worker.execute_buy(ticker, unit_size, self.MAX_BUDGET, new_slot_idx, engine_name='GRID', krw_balance=krw_balance)
                     if success:
                         safe_balances['KRW'] = safe_balances.get('KRW', 0.0) - (unit_size * 1.0005)
                         time.sleep(1.5) 

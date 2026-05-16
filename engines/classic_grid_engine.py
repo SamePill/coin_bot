@@ -112,7 +112,7 @@ class ClassicGridEngine(BaseEngine):
                     krw_balance = safe_balances.get('KRW', 0.0)
                     max_affordable = min(pos['allocated_krw'], krw_balance / 1.0005)
                     if max_affordable >= 5500:
-                        success, exec_price, exec_vol = worker.execute_buy(ticker, buy_krw, self.MAX_BUDGET, pos['slot_index'], engine_name='CLASSIC_GRID')
+                        success, exec_price, exec_vol = worker.execute_buy(ticker, buy_krw, self.MAX_BUDGET, pos['slot_index'], engine_name='CLASSIC_GRID', krw_balance=krw_balance)
                         if success:
                             safe_balances['KRW'] = safe_balances.get('KRW', 0.0) - (buy_krw * 1.0005)
                             time.sleep(1.5)
@@ -149,7 +149,7 @@ class ClassicGridEngine(BaseEngine):
                 new_slot_idx = 1
                 while new_slot_idx in existing_slots: new_slot_idx += 1
                 
-                success, exec_price, exec_vol = worker.execute_buy(ticker, init_invest_amount, self.MAX_BUDGET, new_slot_idx, engine_name='CLASSIC_GRID')
+                success, exec_price, exec_vol = worker.execute_buy(ticker, init_invest_amount, self.MAX_BUDGET, new_slot_idx, engine_name='CLASSIC_GRID', krw_balance=krw_balance)
                 if success:
                     safe_balances['KRW'] = safe_balances.get('KRW', 0.0) - (init_invest_amount * 1.0005)
                     time.sleep(1.5) 
