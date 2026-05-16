@@ -128,18 +128,26 @@ def get_chandelier_exit(ticker, pos_peak_price, current_regime):
 # -------------------------------------------------------------
 
 def check_hunter_dip_buy(ticker):
-    """🏹 과매도 구간(RSI) 및 VWAP 지지 확인"""
+    """🏹 과매도 구간(RSI) 및 VWAP 지지 확인 + 장기 추세 붕괴 방지"""
     try:
+        # 장기 추세 확인 (EMA 200)
+        ema_200 = get_ema200(ticker)
+        
         df = pyupbit.get_ohlcv(ticker, interval="minute5", count=150) 
         if df is None or len(df) < 144: return False
+        
+        curr_price = df['close'].iloc[-1]
+        
+        # 💡 [필터 추가] 장기 추세(EMA 200) 아래로 심하게 파고든 '떨어지는 칼날(완전 역배열)'은 매수 금지
+        if ema_200 > 0 and curr_price < (ema_200 * 0.98): 
+            return False
+            
         df_session = df.tail(144) # 최근 12시간
         
         # VWAP 근사치 계산
         q = df_session['volume']
         p = (df_session['high'] + df_session['low'] + df_session['close']) / 3
         current_vwap = ((p * q).cumsum() / q.cumsum()).iloc[-1]
-        
-        curr_price = df_session['close'].iloc[-1]
         rsi = calc_rsi(df_session['close'], 14)
         
         # VWAP 근처에서 RSI 반등 및 거래량 증가 확인
