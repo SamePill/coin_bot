@@ -204,7 +204,8 @@ def get_today_performance(days_ago=0):
                     engine_name as engine,
                     SUM(realized_profit) as total_profit,
                     AVG(profit_rate) as avg_rate,
-                    COUNT(*) as trade_count
+                    COUNT(*) as trade_count,
+                    (SUM(CASE WHEN realized_profit > 0 THEN 1 ELSE 0 END) / COUNT(*)) * 100 as win_rate
                 FROM trade_logs 
                 WHERE account_id = %s 
                   AND trade_time BETWEEN %s AND %s 

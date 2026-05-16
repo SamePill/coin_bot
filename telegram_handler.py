@@ -138,7 +138,8 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for row in rows:
             ic = "🏹" if row['engine'] == 'HUNTER' else "🕸️" if row['engine'] == 'CLASSIC_GRID' else "🛡️" if row['engine'] == 'CORE' else "⚡" if row['engine'] == 'SCALP' else "🎰" if row['engine'] == 'GRID' else "🤖"
             #ic = "🛡️" if row['engine']=='CORE' else ("🏹" if row['engine']=='HUNTER' else "🕸️")
-            msg += f"{ic} {row['engine']}: {row['total_profit']:+,.0f}원 ({row['avg_rate']:+.2f}%)\n"
+            win_rate = row.get('win_rate', 0)
+            msg += f"{ic} {row['engine']}: {row['total_profit']:+,.0f}원 (승률: {win_rate:.0f}% / {row['avg_rate']:+.2f}%)\n"
             total_krw += row['total_profit']
         
         total_rate = (total_krw / seed_money * 100) if seed_money > 0 else 0

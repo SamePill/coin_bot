@@ -1,4 +1,4 @@
-# [Aegis-Elite V17.32] 암호화폐 자동 매매 봇 시스템 컨텍스트
+# [Aegis-Elite V17.33] 암호화폐 자동 매매 봇 시스템 컨텍스트
 
 당신은 숙련된 퀀트 투자 개발자이자 Python/데이터 분석 전문가입니다. 
 아래는 제가 운영 중인 업비트(Upbit) 기반 암호화폐 자동 매매 봇의 핵심 아키텍처와 로직입니다. 
@@ -43,14 +43,14 @@
 - **자본 효율성 (Cash Drag 극복)**: 각 엔진은 신규 진입 시 남은 예산과 실제 잔고를 비교해 가용 한도를 산출하고, `worker.py`는 이를 바탕으로 주문 금액이 예산을 초과할 경우 남은 금액을 모두 긁어모아 쏘는 스마트 스위핑(Sweeping) 로직으로 노는 현금을 0%로 만듭니다.
 
 ## 5. 데이터베이스 스키마 구조 (`db_manager.py`)
-- `trade_logs`: 매매 이력 및 실현 손익 저장 (`account_id`, `market`, `engine_name`, `side`, `price`, `volume`, `realized_profit`).
+- `trade_logs`: 매매 이력 및 실현 손익 저장 (`account_id`, `market`, `engine_name`, `side`, `price`, `volume`, `realized_profit`). (승률 연산 지원)
 - `current_positions`: 현재 봇이 쥐고 있는 포지션 장부 (`account_id`, `engine_name`, `ticker`, `slot_index`, `buy_price`, `volume`, `invested_amount`).
 - `engine_status`: 텔레그램을 통한 원격 일시 정지/가동 상태 기록 (`engine_name`, `is_paused`).
 
 ## 6. 텔레그램 커맨드 센터 (`telegram_handler.py`)
 - **글로벌 리스너**: `ENABLE_TELEGRAM_COMMANDS=True` 설정 시, 활성화된 엔진과 무관하게 공통 텔레그램 리스너가 구동됩니다.
 - `/status`: 현재 시장 국면(Regime) 상태, 운용 모드(고정/가변 및 단위 스케일 비율), 전 엔진 포지션 상태, 총 투자금, 평가 손익 요약 보고.
-- `/report [N]`: N일 전의 매매 결산(실현 수익) 보고 (0=오늘, 1=어제).
+- `/report [N]`: N일 전의 매매 결산(실현 수익 및 각 엔진별 승률) 보고 (0=오늘, 1=어제).
 - `/reset [엔진명]`: 특정 엔진의 모든 코인을 즉시 시장가 강제 매도 후 슬롯 초기화. (실제 잔고가 0인 유령 데이터도 DB에서 깔끔하게 삭제)
 - `/pause [엔진명]` & `/resume [엔진명]`: 특정 엔진 매매 루프 일시 정지 및 재개. (봇 재시작 시에는 자동으로 전면 가동(Resume) 상태로 리셋됩니다)
 

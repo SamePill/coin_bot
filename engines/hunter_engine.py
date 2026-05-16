@@ -108,7 +108,7 @@ class HunterEngine(BaseEngine):
                 if current_hunter_count >= self.TARGET_SLOTS: break
                 if ticker in [p['ticker'] for p in bot_positions.values()]: continue
 
-                if analyzer.check_hunter_dip_buy(ticker) or analyzer.is_pin_bar(ticker):
+                if analyzer.check_hunter_dip_buy(ticker) and analyzer.is_pin_bar(ticker):
                     krw_balance = safe_balances.get('KRW', 0.0)
                     max_affordable = min(self.MAX_BUDGET - already_used, krw_balance / 1.0005)
                     if max_affordable < 5500:

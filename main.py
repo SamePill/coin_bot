@@ -549,7 +549,8 @@ while True:
                 total_krw = 0
                 for r in rows:
                     # 수익금(total_profit)과 수익률(avg_rate)을 함께 표시합니다.
-                    report_msg += f"- {r['engine']}: {r['total_profit']:+,.0f}원 ({r['avg_rate']:+.2f}%)\n"
+                    win_rate = r.get('win_rate', 0)
+                    report_msg += f"- {r['engine']}: {r['total_profit']:+,.0f}원 (승률: {win_rate:.0f}%)\n"
                     total_krw += r['total_profit']
                 report_msg += f"──────────────\n💵 당일 총 합계: {total_krw:+,.0f}원"
                 
