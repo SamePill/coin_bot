@@ -91,16 +91,12 @@ class GridEngine(BaseEngine):
                     invest_amount = base_unit * weight
                     
                     already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in grid_pos_items.values())
-                    if (already_used + invest_amount) > self.MAX_BUDGET:
-                        if not self.budget_lock_notified:
-                            print(f"🛑 [GRID 예산 잠금] {ticker} {next_level}차 물타기 보류 (사용량: {already_used:,.0f} / 한도: {self.MAX_BUDGET:,.0f})")
-                            self.budget_lock_notified = True
-                        continue
-
                     krw_balance = safe_balances.get('KRW', 0.0)
-                    if krw_balance < invest_amount * 1.0005:
+                    max_affordable = min(self.MAX_BUDGET - already_used, krw_balance / 1.0005)
+                    
+                    if max_affordable < 5500:
                         if not self.budget_lock_notified:
-                            print(f"❌ [예산 초과] {ticker} {next_level}차 진입 실패. (필요: {invest_amount:,.0f}원 / 잔고: {krw_balance:,.0f}원)")
+                            print(f"🛑 [GRID 예산/잔고 잠금] {ticker} {next_level}차 물타기 보류 (가용 예산: {max_affordable:,.0f}원)")
                             self.budget_lock_notified = True
                         continue
 
@@ -149,19 +145,15 @@ class GridEngine(BaseEngine):
                     unit_size = self.UNIT_LIST[current_count] if current_count < len(self.UNIT_LIST) else self.UNIT_LIST[-1]
                     
                     krw_balance = safe_balances.get('KRW', 0.0)
-                    if krw_balance < unit_size * 1.0005:
+                    already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in grid_pos_items.values())
+                    max_affordable = min(self.MAX_BUDGET - already_used, krw_balance / 1.0005)
+                    
+                    if max_affordable < 5500:
                         if not getattr(self, 'balance_lock_notified', False):
-                            print(f"🛑 [실제 잔고 부족/GRID] 신규 진입 불가. (필요: {unit_size:,.0f}원 / 실제 잔고: {krw_balance:,.0f}원)")
+                            print(f"🛑 [GRID 예산/잔고 잠금] 신규 진입 보류 (가용 예산: {max_affordable:,.0f}원)")
                             self.balance_lock_notified = True
                         break
                     self.balance_lock_notified = False
-                    
-                    already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in grid_pos_items.values())
-                    if (already_used + unit_size) > self.MAX_BUDGET:
-                        if not self.budget_lock_notified:
-                            print(f"🛑 [GRID 예산 잠금] 신규 진입 예산 초과. 사냥 보류. (한도: {self.MAX_BUDGET:,.0f}원)")
-                            self.budget_lock_notified = True
-                        break
 
                     self.budget_lock_notified = False
                     existing_slots = [p['slot_index'] for p in bot_positions.values() if p['ticker'] == ticker and p['engine'] == 'GRID']

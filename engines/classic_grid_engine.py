@@ -110,7 +110,8 @@ class ClassicGridEngine(BaseEngine):
                 elif curr_p <= pos['last_grid_price'] - step and curr_p > analyzer.get_ema200(ticker):
                     buy_krw = max(pos['allocated_krw'] * 0.15, 6000)
                     krw_balance = safe_balances.get('KRW', 0.0)
-                    if krw_balance >= buy_krw * 1.0005 and pos['allocated_krw'] >= buy_krw:
+                    max_affordable = min(pos['allocated_krw'], krw_balance / 1.0005)
+                    if max_affordable >= 5500:
                         success, exec_price, exec_vol = worker.execute_buy(ticker, buy_krw, self.MAX_BUDGET, pos['slot_index'], engine_name='CLASSIC_GRID')
                         if success:
                             safe_balances['KRW'] = safe_balances.get('KRW', 0.0) - (buy_krw * 1.0005)
@@ -135,18 +136,13 @@ class ClassicGridEngine(BaseEngine):
                 if remaining_slots <= 0: break
                 if ticker in active_tickers: continue 
                 krw_balance = safe_balances.get('KRW', 0.0)
-                if krw_balance < init_invest_amount * 1.0005: 
+                max_affordable = min(self.MAX_BUDGET - already_used, krw_balance / 1.0005)
+                if max_affordable < 5500: 
                     if not getattr(self, 'balance_lock_notified', False):
-                        print(f"🛑 [실제 잔고 부족/CLASSIC_GRID] 신규 진입 불가. (필요: {init_invest_amount:,.0f}원 / 실제 잔고: {krw_balance:,.0f}원)")
+                        print(f"🛑 [CLASSIC_GRID 예산/잔고 잠금] 신규 진입 보류 (가용 예산: {max_affordable:,.0f}원)")
                         self.balance_lock_notified = True
                     break
                 self.balance_lock_notified = False
-                
-                if (already_used + init_invest_amount) > self.MAX_BUDGET:
-                    if not self.budget_lock_notified:
-                        print(f"🛑 [{self.ENGINE_NAME} 예산 잠금] 신규 진입 예산 초과. (한도: {self.MAX_BUDGET:,.0f}원)")
-                        self.budget_lock_notified = True
-                    break 
                 
                 self.budget_lock_notified = False
                 existing_slots = [p['slot_index'] for p in bot_positions.values() if p['engine'] == self.ENGINE_NAME]

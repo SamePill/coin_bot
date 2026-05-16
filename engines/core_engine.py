@@ -102,9 +102,10 @@ class CoreEngine(BaseEngine):
                 if curr_p >= (t_info['open'] + t_info['range']*t_info['k']):
                     if analyzer.check_keltner_breakout(ticker) and analyzer.get_adx(ticker) > 25 and analyzer.check_volume_spike(ticker):
                         krw_balance = safe_balances.get('KRW', 0.0)
-                        if krw_balance < base_invest * 1.0005 or (already_used + base_invest) > self.MAX_BUDGET:
+                        max_affordable = min(self.MAX_BUDGET - already_used, krw_balance / 1.0005)
+                        if max_affordable < 5500:
                             if not self.budget_lock_notified:
-                                print(f"🛑 [CORE 예산/잔고 잠금] {ticker} 보류 (사용량: {already_used:,.0f} / 잔고: {krw_balance:,.0f})")
+                                print(f"🛑 [CORE 예산/잔고 잠금] {ticker} 보류 (가용 예산: {max_affordable:,.0f}원)")
                                 self.budget_lock_notified = True
                             break
                             

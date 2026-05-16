@@ -23,16 +23,21 @@ def execute_buy(ticker, amount, engine_budget, slot_index=1, engine_name='CORE')
         # 💡 [지능형 컨트롤 타워] 시장 장세에 따라 진입 금액(UNIT_SIZE) 동적 조절
         original_amount = amount
         amount = amount * DYNAMIC_UNIT_MULTIPLIER
-        amount = max(5500.0, amount)  # 💡 [버그 수정] 가변 배수와 무관하게 업비트 최소 주문 금액(5,000원)은 무조건 방어
             
         # 1. DB 장부에서 이 엔진(CORE/HUNTER/GRID)이 현재 점유 중인 총 자산 확인
         already_used = db_manager.get_engine_invested_total(engine_name)
         
-        # 2. 이번 매수 금액을 합쳤을 때 해당 엔진에 할당된 예산을 초과하는지 검사
-        if already_used + amount > engine_budget:
-            print(f"⚠️ [{engine_name}] 예산 한도 초과! (현재 사용: {already_used:,.0f} / 한도: {engine_budget:,.0f})")
-            print("💤 5분간 대기 후 다시 확인합니다...")
-            time.sleep(300)  # ⬅️ 300초(5분) 동안 루프를 멈춤
+        # 💡 [V17.32 캐시 드래그 해결] 가용 예산 비중에 따른 주문 금액 동적 스위핑(Sweeping)
+        available_budget = engine_budget - already_used
+        if amount > available_budget:
+            amount = available_budget  # 남은 예산 한도 내로 금액을 영끌하여 강제 축소
+            
+        amount = max(5500.0, amount)  # 업비트 최소 주문 금액 방어
+        
+        # 5500원 하한선 보정 후에도 예산을 심하게(5% 이상) 초과한다면 완전 고갈로 판단
+        if already_used + amount > engine_budget * 1.05:
+            print(f"⚠️ [{engine_name}] 가용 예산 완전 고갈 (남은 예산: {available_budget:,.0f}원)")
+            time.sleep(60) # 과부하 방지용 짧은 대기
             return False, 0, 0  # 💡 수정: 실패 시 단가, 수량 0 반환
             
         # 💡 [로그 출력] 스케일링이 실제로 적용되어 매수가 들어갈 때만 콘솔에 알림

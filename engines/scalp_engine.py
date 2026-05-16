@@ -91,7 +91,8 @@ class ScalpEngine(BaseEngine):
                 already_used = sum(p.get('invested_amount', p['buy'] * p['vol']) for p in scalp_pos_items.values())
                 krw_balance = safe_balances.get('KRW', 0.0)
 
-                if krw_balance >= base_unit * 1.0005 and (already_used + base_unit) <= self.MAX_BUDGET:
+                max_affordable = min(self.MAX_BUDGET - already_used, krw_balance / 1.0005)
+                if max_affordable >= 5500:
                     self.budget_lock_notified = False
                     print(f"📉 [스캘핑 방어] {ticker} {next_level}차 진입 시도 (목표 간격: -{dynamic_dca_target*100:.2f}%)")
                     success, exec_price, exec_vol = worker.execute_buy(ticker, base_unit, self.MAX_BUDGET, pos['slot_index'], engine_name='SCALP')
@@ -130,15 +131,11 @@ class ScalpEngine(BaseEngine):
                 if current_count < slot_limit:
                     unit_size = self.SCALP_UNIT_LIST[current_count] if current_count < len(self.SCALP_UNIT_LIST) else self.SCALP_UNIT_LIST[-1]
                     krw_balance = safe_balances.get('KRW', 0.0)
-                    if krw_balance < unit_size * 1.0005:
+                    
+                    max_affordable = min(self.MAX_BUDGET - already_used, krw_balance / 1.0005)
+                    if max_affordable < 5500:
                         if not self.budget_lock_notified:
-                            print(f"❌ [실제 잔고 부족/SCALP] 신규 진입 불가 (필요: {unit_size:,.0f}원 / 잔고: {krw_balance:,.0f}원)")
-                            self.budget_lock_notified = True
-                        break
-
-                    if (already_used + unit_size) > self.MAX_BUDGET:
-                        if not self.budget_lock_notified: 
-                            print(f"🛑 [SCALP 예산 잠금] 신규 진입 예산 초과. 사냥 보류. (한도: {self.MAX_BUDGET:,.0f}원)")
+                            print(f"🛑 [SCALP 예산/잔고 잠금] 신규 진입 보류 (가용 예산: {max_affordable:,.0f}원)")
                             self.budget_lock_notified = True
                         break
 
