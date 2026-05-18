@@ -293,7 +293,8 @@ def apply_dynamic_allocation(regime, notify=False):
         "SUPER_BULL": {"CORE": 0.4, "SCALP": 0.3, "GRID": 0.2, "CLASSIC_GRID": 0.1, "HUNTER": 0.0, "usage": 1.0, "unit_multiplier": 1.2},
         "NORMAL":     {"GRID": 0.4, "SCALP": 0.3, "CORE": 0.1, "HUNTER": 0.1, "CLASSIC_GRID": 0.1, "usage": 1.0, "unit_multiplier": 1.0},
         "CAUTION":    {"HUNTER": 0.4, "CLASSIC_GRID": 0.3, "GRID": 0.2, "SCALP": 0.1, "CORE": 0.0, "usage": 0.6, "unit_multiplier": 0.7},
-        "ICE_AGE":    {"HUNTER": 0.5, "CLASSIC_GRID": 0.5, "GRID": 0.0, "SCALP": 0.0, "CORE": 0.0, "usage": 0.3, "unit_multiplier": 0.5}
+        # 💡 [V17.36 완전 동면 모드] 빙하기에는 모든 엔진 예산 0%로 신규 매수 전면 차단 (현금 관망)
+        "ICE_AGE":    {"HUNTER": 0.0, "CLASSIC_GRID": 0.0, "GRID": 0.0, "SCALP": 0.0, "CORE": 0.0, "usage": 0.0, "unit_multiplier": 0.0}
     }
     
     weights = allocation_map.get(regime, allocation_map["NORMAL"])
@@ -304,31 +305,37 @@ def apply_dynamic_allocation(regime, notify=False):
     
     # 사용자가 켠 엔진들 사이에서만 가중치를 100%로 꽉 차게 재조정(정규화)
     active_weight_sum = sum(weights.get(e, 0) for e in ACTIVE_ENGINES)
-    if active_weight_sum == 0: return
         
     # 리스크 관리를 위해 빙하기에는 전체 예산의 일부(usage)만 사용
     actual_budget = DYNAMIC_TOTAL_BUDGET * weights.get("usage", 1.0)
     TOTAL_BUDGET = actual_budget
     
-    noti_msg = f"🧠 [지능형 컨트롤 타워] 시장 국면 조정 발동!\n"
-    noti_msg += f"🌍 변경된 시장: {REGIME_SETTINGS.get(regime, {}).get('desc', regime)}\n"
-    noti_msg += f"💵 가용 예산: {actual_budget:,.0f}원 (총 풀의 {weights.get('usage', 1.0)*100:.0f}%)\n"
-    noti_msg += f"💉 1회 매수 크기 스케일링: {unit_mult*100:.0f}%\n"
-    noti_msg += "📊 [엔진별 예산 분배]\n"
-    
-    print(f"\n🧠 [컨트롤 타워] 시장 국면({regime}) 기반 예산 재조정 발동!")
-    print(f"💵 가용 예산: {actual_budget:,.0f}원 (총 풀의 {weights.get('usage', 1.0)*100:.0f}%)")
-    print(f"💉 투자 단위(Unit Size) 스케일링: {unit_mult*100:.0f}% 적용")
+    if regime == "ICE_AGE":
+        noti_msg = f"❄️ [동면 모드 발동] 시장 빙하기 감지!\n"
+        noti_msg += f"🚨 모든 엔진의 신규 매수를 중단하고 100% 현금 관망 상태로 전환합니다.\n"
+        noti_msg += f"💡 (기존 보유 코인의 익절/손절 감시는 계속 가동됩니다)\n"
+        print("\n❄️ [동면 모드] 빙하기 진입. 모든 가용 예산을 0원으로 동결합니다.")
+    else:
+        noti_msg = f"🧠 [지능형 컨트롤 타워] 시장 국면 조정 발동!\n"
+        noti_msg += f"🌍 변경된 시장: {REGIME_SETTINGS.get(regime, {}).get('desc', regime)}\n"
+        noti_msg += f"💵 가용 예산: {actual_budget:,.0f}원 (총 풀의 {weights.get('usage', 1.0)*100:.0f}%)\n"
+        noti_msg += f"💉 1회 매수 크기 스케일링: {unit_mult*100:.0f}%\n"
+        noti_msg += "📊 [엔진별 예산 분배]\n"
+        
+        print(f"\n🧠 [컨트롤 타워] 시장 국면({regime}) 기반 예산 재조정 발동!")
+        print(f"💵 가용 예산: {actual_budget:,.0f}원 (총 풀의 {weights.get('usage', 1.0)*100:.0f}%)")
+        print(f"💉 투자 단위(Unit Size) 스케일링: {unit_mult*100:.0f}% 적용")
 
     for eng in ACTIVE_ENGINES:
-        norm_w = weights.get(eng, 0) / active_weight_sum
+        norm_w = (weights.get(eng, 0) / active_weight_sum) if active_weight_sum > 0 else 0
         new_budget = actual_budget * norm_w
         ENGINE_BUDGETS[eng] = new_budget
         if eng in active_engines:
             active_engines[eng].MAX_BUDGET = new_budget
         icon = "🟢" if new_budget > 0 else "🔴"
-        print(f"  - {icon} {eng:12}: {new_budget:>10,.0f}원 ({norm_w*100:>4.1f}%)")
-        noti_msg += f"  - {icon} {eng}: {new_budget:,.0f}원 ({norm_w*100:.1f}%)\n"
+        if regime != "ICE_AGE":
+            print(f"  - {icon} {eng:12}: {new_budget:>10,.0f}원 ({norm_w*100:>4.1f}%)")
+            noti_msg += f"  - {icon} {eng}: {new_budget:,.0f}원 ({norm_w*100:.1f}%)\n"
         
     if notify:
         send_telegram(noti_msg)
