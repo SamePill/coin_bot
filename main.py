@@ -105,8 +105,7 @@ def _safe_get_tickers(fiat="KRW", verbose=False):
             res = _original_get_tickers(fiat=fiat, verbose=verbose)
             if res is not None:
                 if USE_REDIS_CACHE:
-                    try: redis_client.setex(cache_key, 3600, json.dumps(res)) # 종목 목록은 1시간 캐싱
-                    except: pass
+                    try: redis_client.set
                 return res
         except Exception as e:
             time.sleep(2)
@@ -146,8 +145,7 @@ def _safe_get_current_price(ticker, limit_info=False, verbose=False):
             if res is not None: 
                 # 2. Redis에 저장 (2초 TTL 적용)
                 if USE_REDIS_CACHE:
-                    try: redis_client.setex(cache_key, 2, json.dumps(res))
-                    except: pass
+                    try: redis_clie
                 return res
         except Exception as e:
             err_msg = str(e)
@@ -249,9 +247,8 @@ def _safe_get_ohlcv(ticker, interval="day", count=200, to=None, period=0.1):
             if df is not None and not (isinstance(df, list) and len(df) == 0):
                 if cache_duration > 0:
                     if USE_REDIS_CACHE:
-                        try: redis_client.setex(f"ohlcv_{cache_key}", cache_duration, pickle.dumps(df))
+                        try: redis_client.set(f"ohlcv_{cache_key}", pickle.dumps(df), ex=cache_duration)
                         except: pass
-                    else:
                         _ohlcv_cache[cache_key] = (now, df)
                 return df
         except Exception as e:
