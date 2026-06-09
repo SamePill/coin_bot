@@ -105,7 +105,8 @@ def _safe_get_tickers(fiat="KRW", verbose=False):
             res = _original_get_tickers(fiat=fiat, verbose=verbose)
             if res is not None:
                 if USE_REDIS_CACHE:
-                    try: redis_client.set
+                    try: redis_client.set(cache_key, json.dumps(res), ex=3600)
+                    except: pass
                 return res
         except Exception as e:
             time.sleep(2)
@@ -145,7 +146,8 @@ def _safe_get_current_price(ticker, limit_info=False, verbose=False):
             if res is not None: 
                 # 2. Redis에 저장 (2초 TTL 적용)
                 if USE_REDIS_CACHE:
-                    try: redis_clie
+                    try: redis_client.set(cache_key, json.dumps(res), ex=2)
+                    except: pass
                 return res
         except Exception as e:
             err_msg = str(e)
