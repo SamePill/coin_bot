@@ -4,9 +4,11 @@ import asyncio
 import logging
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, filters
 
 # 📦 설정 및 DB 모듈 로드
 from config import TEL_TOKEN, UPBIT_ACCESS, UPBIT_SECRET, REGIME_SETTINGS # 💡 시장 국면 설정 추가
+from config import TEL_TOKEN, TEL_CHAT_ID, UPBIT_ACCESS, UPBIT_SECRET, REGIME_SETTINGS # 💡 챗 ID 추가
 import db_manager
 
 # 메인 프로세스의 실시간 상태를 참조할 전역 변수
@@ -315,13 +317,23 @@ def _run_bot():
         app.add_handler(CommandHandler("status", status_command))
         app.add_handler(CommandHandler("report", report_command))
         
+        # 💡 [보안 패치] 등록된 소유자(TEL_CHAT_ID)의 채팅방에서 온 명령어만 처리하도록 필터링
+        auth_filter = filters.Chat(chat_id=int(TEL_CHAT_ID)) if TEL_CHAT_ID else filters.ALL
+        
+        app.add_handler(CommandHandler("status", status_command, filters=auth_filter))
+        app.add_handler(CommandHandler("report", report_command, filters=auth_filter))
+        
         # 💡 새로 추가한 커맨드 핸들러 등록
         app.add_handler(CommandHandler("reset", reset_command))
         app.add_handler(CommandHandler("help", help_command))
+        app.add_handler(CommandHandler("reset", reset_command, filters=auth_filter))
+        app.add_handler(CommandHandler("help", help_command, filters=auth_filter))
     
         # 💡 [추가] 정지 및 재가동 커맨드 핸들러 등록
         app.add_handler(CommandHandler("pause", pause_command))
         app.add_handler(CommandHandler("resume", resume_command))
+        app.add_handler(CommandHandler("pause", pause_command, filters=auth_filter))
+        app.add_handler(CommandHandler("resume", resume_command, filters=auth_filter))
     
         print("📲 텔레그램 봇 수신 대기 중...")
         app.run_polling(stop_signals=None)    
